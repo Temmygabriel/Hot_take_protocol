@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { createClient, createAccount, generatePrivateKey } from "genlayer-js";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { motion } from "framer-motion";
+import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
@@ -39,48 +40,28 @@ interface Room {
 }
 
 // ============================================
-// CONTRACT HELPERS
+// CONTRACT HELPERS – no persistence, fresh account per session
 // ============================================
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}` | undefined;
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
 const MAX_ATTEMPTS = 3;
 
-/**
- * KEY FIX: Store ONLY the private key in localStorage.
- * Previously, the full account object (with methods) was stored as JSON.
- * JSON.stringify strips methods, so JSON.parse returned a plain object
- * without signTransaction() — causing "Account does not support signTransaction".
- *
- * Solution: Store just the hex private key string.
- * Recreate the full account each time via createAccount(privateKey).
- */
-function getOrCreateAccount() {
-  if (typeof window === "undefined") {
-    // SSR: generate a temporary account
-    return createAccount();
+// We'll store a single account in a module variable (resets on page reload)
+let sessionAccount: ReturnType<typeof createAccount> | null = null;
+
+function getSessionAccount() {
+  if (!sessionAccount) {
+    sessionAccount = createAccount();
   }
-  const storedKey = localStorage.getItem("htp_private_key");
-  if (storedKey) {
-    try {
-      return createAccount(storedKey as `0x${string}`);
-    } catch {
-      // If stored key is invalid, generate a new one
-    }
-  }
-  // Generate a new private key and store only the key (not the account object)
-  const privateKey = generatePrivateKey();
-  localStorage.setItem("htp_private_key", privateKey);
-  return createAccount(privateKey);
+  return sessionAccount;
 }
 
 function makeClient() {
-  const account = getOrCreateAccount();
-  // Pass the full account (with private key) so client can sign transactions
+  const account = getSessionAccount();
   const client = createClient({ chain: studionet, account });
   return { client, account };
 }
 
 async function readContract(functionName: string, args: any[]): Promise<any> {
-  if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   const { client } = makeClient();
   return await client.readContract({
     address: CONTRACT_ADDRESS,
@@ -90,11 +71,9 @@ async function readContract(functionName: string, args: any[]): Promise<any> {
 }
 
 async function writeContract(functionName: string, args: any[]): Promise<boolean> {
-  if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const { client } = makeClient();
-      console.log(`writeContract attempt ${attempt}/${MAX_ATTEMPTS}: ${functionName}`);
       const hash = await client.writeContract({
         address: CONTRACT_ADDRESS,
         functionName,
@@ -109,7 +88,6 @@ async function writeContract(functionName: string, args: any[]): Promise<boolean
       });
       return true;
     } catch (err: any) {
-      console.error(`writeContract ${functionName} attempt ${attempt} failed:`, err?.message);
       if (attempt < MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, attempt * 3000));
         continue;
@@ -121,18 +99,14 @@ async function writeContract(functionName: string, args: any[]): Promise<boolean
 }
 
 async function writeContractWithReturn(functionName: string, args: any[]): Promise<string> {
-  if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const { client } = makeClient();
-      console.log(`writeContractWithReturn attempt ${attempt}/${MAX_ATTEMPTS}: ${functionName}`);
-      // Simulate first to get return value
       const returnValue = await client.simulateWriteContract({
         address: CONTRACT_ADDRESS,
         functionName,
         args,
       });
-      // Then execute the real transaction
       const hash = await client.writeContract({
         address: CONTRACT_ADDRESS,
         functionName,
@@ -147,7 +121,6 @@ async function writeContractWithReturn(functionName: string, args: any[]): Promi
       });
       return returnValue as string;
     } catch (err: any) {
-      console.error(`writeContractWithReturn ${functionName} attempt ${attempt} failed:`, err?.message);
       if (attempt < MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, attempt * 3000));
         continue;
@@ -286,7 +259,6 @@ const css = `
   .slide-up { animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
   @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* Landing hero styles */
   .hero-badge {
     display: inline-flex;
     align-items: center;
@@ -377,24 +349,12 @@ const css = `
     gap: 0.75rem;
     margin-top: 0.75rem;
   }
-  .floating-tag {
-    position: absolute;
-    background: white;
-    border: 1.5px solid ${C.border};
-    border-radius: 10px;
-    padding: 6px 12px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    white-space: nowrap;
-  }
 `;
 
 export default function HotTakeProtocol() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
-  const [envError, setEnvError] = useState("");
   const [nameLocked, setNameLocked] = useState(false);
   
   const [playerName, setPlayerName] = useState("");
@@ -409,17 +369,9 @@ export default function HotTakeProtocol() {
   const [votes, setVotes] = useState<Record<string, string>>({});
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
 
+  // Get the session account once on mount
   useEffect(() => {
-    if (!CONTRACT_ADDRESS) {
-      setEnvError("Missing contract address. Set NEXT_PUBLIC_CONTRACT_ADDRESS in .env.local");
-    }
-    const storedName = localStorage.getItem("htp_player_name");
-    if (storedName) {
-      setPlayerName(storedName);
-      setNameLocked(true);
-    }
-    // KEY FIX: Recreate account from stored private key, not from stored JSON object
-    const account = getOrCreateAccount();
+    const { account } = makeClient();
     setPlayerAddress(account.address);
     loadLeaderboard();
   }, []);
@@ -430,6 +382,15 @@ export default function HotTakeProtocol() {
       setNameLocked(true);
     }
   };
+
+  // Load stored name from localStorage (but not private key)
+  useEffect(() => {
+    const storedName = localStorage.getItem("htp_player_name");
+    if (storedName) {
+      setPlayerName(storedName);
+      setNameLocked(true);
+    }
+  }, []);
 
   const loadLeaderboard = async () => {
     try {
@@ -463,7 +424,11 @@ export default function HotTakeProtocol() {
         if (raw) {
           const room = JSON.parse(raw as string);
           setCurrentRoom(room);
-          if (room.status === "completed") {
+          if (room.status === "round_1" && screen === "lobby") {
+            setScreen("game");
+          } else if (room.status === "round_2" && screen === "game") {
+            setScreen("game");
+          } else if (room.status === "completed" && screen !== "results") {
             clearInterval(interval);
             setPollInterval(null);
             setScreen("results");
@@ -474,7 +439,7 @@ export default function HotTakeProtocol() {
       }
     }, 3000);
     setPollInterval(interval);
-  }, [screen, pollInterval]);
+  }, [screen]);
 
   useEffect(() => {
     return () => {
@@ -491,7 +456,6 @@ export default function HotTakeProtocol() {
     setLoadingMessage("Creating room...");
     try {
       localStorage.setItem("htp_player_name", playerName.trim());
-      // playerAddress is derived from the stored private key — always valid
       const code = await writeContractWithReturn("create_room", [playerAddress, playerName.trim()]);
       setRoomCode(code);
       const raw = await readContract("get_room", [code]);
@@ -587,7 +551,9 @@ export default function HotTakeProtocol() {
       if (raw) {
         const room = JSON.parse(raw as string);
         setCurrentRoom(room);
-        setScreen("game");
+        if (room.status === "round_1") {
+          setScreen("game");
+        }
       }
     } catch (err: any) {
       alert(`Failed to start game: ${err.message}`);
@@ -610,7 +576,6 @@ export default function HotTakeProtocol() {
       if (raw) {
         const room = JSON.parse(raw as string);
         setCurrentRoom(room);
-        
         const allSubmitted = room.players.every((p: Player) => 
           Object.keys(room.submissions).some(key => key.startsWith(p.address))
         );
@@ -642,7 +607,6 @@ export default function HotTakeProtocol() {
       if (raw) {
         const room = JSON.parse(raw as string);
         setCurrentRoom(room);
-        
         const allVoted = room.players.every((p: Player) => 
           p.address.startsWith("bot_") || room.votes[p.address]
         );
@@ -672,21 +636,14 @@ export default function HotTakeProtocol() {
     }
   };
 
-  // ============================================
-  // RENDER: LOADING OVERLAY
-  // ============================================
+  // ========== RENDER FUNCTIONS (unchanged) ==========
   const renderLoadingOverlay = () => {
     if (!loading) return null;
     return (
       <div style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-        backdropFilter: "blur(4px)",
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9999, backdropFilter: "blur(4px)",
       }}>
         <div className="card" style={{ textAlign: "center", minWidth: 300 }}>
           <div className="spin" style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔥</div>
@@ -697,433 +654,116 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ============================================
-  // RENDER: LANDING — Redesigned Hero
-  // ============================================
   const renderLanding = () => (
     <div style={{ minHeight: "100vh", background: C.bg }} className="fadeIn">
-      {/* Hero Section */}
       <div style={{
         background: "linear-gradient(160deg, #fff 0%, #FFF5F2 60%, #F5F7FA 100%)",
         borderBottom: `1px solid ${C.border}`,
         padding: "4rem 1.5rem 3rem",
       }}>
         <div style={{ maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
-          {/* Badge */}
-          <div className="hero-badge">
-            <span>🔥</span> Powered by GenLayer AI
-          </div>
-
-          {/* Main title */}
-          <h1 className="hero-title">
-            DROP YOUR<br />
-            <span className="highlight">HOT TAKES</span><br />
-            WIN THE CROWD
-          </h1>
-
-          {/* Subtitle */}
-          <p className="hero-subtitle">
-            A 5-player debate game where AI judges your arguments.<br />
-            The spiciest take wins.
-          </p>
-
-          {/* Stats row */}
+          <div className="hero-badge"><span>🔥</span> Powered by GenLayer AI</div>
+          <h1 className="hero-title">DROP YOUR<br /><span className="highlight">HOT TAKES</span><br />WIN THE CROWD</h1>
+          <p className="hero-subtitle">A 5-player debate game where AI judges your arguments.<br />The spiciest take wins.</p>
           <div style={{ display: "flex", justifyContent: "center", gap: "0.75rem", marginBottom: "3rem", flexWrap: "wrap" }}>
-            <div className="stat-chip">
-              <span className="num">5</span>
-              <span className="lbl">Players</span>
-            </div>
-            <div className="stat-chip">
-              <span className="num">3</span>
-              <span className="lbl">Rounds</span>
-            </div>
-            <div className="stat-chip">
-              <span className="num">AI</span>
-              <span className="lbl">Judges</span>
-            </div>
-            <div className="stat-chip">
-              <span className="num">10m</span>
-              <span className="lbl">Game</span>
-            </div>
+            <div className="stat-chip"><span className="num">5</span><span className="lbl">Players</span></div>
+            <div className="stat-chip"><span className="num">3</span><span className="lbl">Rounds</span></div>
+            <div className="stat-chip"><span className="num">AI</span><span className="lbl">Judges</span></div>
+            <div className="stat-chip"><span className="num">10m</span><span className="lbl">Game</span></div>
           </div>
         </div>
       </div>
-
-      {/* Action Section */}
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "2.5rem 1.5rem" }}>
-
-        {/* Name input */}
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div style={{ fontWeight: 700, fontSize: "0.8rem", letterSpacing: "0.06em", textTransform: "uppercase", color: C.muted, marginBottom: "0.85rem" }}>
-            Your Player Name
-          </div>
+          <div style={{ fontWeight: 700, fontSize: "0.8rem", letterSpacing: "0.06em", textTransform: "uppercase", color: C.muted, marginBottom: "0.85rem" }}>Your Player Name</div>
           <div className="name-input-row">
-            <input
-              type="text"
-              placeholder="Enter your name..."
-              value={playerName}
-              onChange={(e) => { setPlayerName(e.target.value); setNameLocked(false); }}
-              onKeyDown={(e) => e.key === "Enter" && lockName()}
-              disabled={nameLocked}
-              style={{ borderColor: nameLocked ? C.secondary : undefined }}
-            />
+            <input type="text" placeholder="Enter your name..." value={playerName} onChange={(e) => { setPlayerName(e.target.value); setNameLocked(false); }} onKeyDown={(e) => e.key === "Enter" && lockName()} disabled={nameLocked} />
             {nameLocked ? (
-              <button className="set-btn" style={{
-                background: C.secondary, color: C.text, border: "none", borderRadius: 12,
-                padding: "0 1.1rem", fontWeight: 700, fontSize: "0.85rem", cursor: "pointer",
-                fontFamily: "inherit", whiteSpace: "nowrap",
-              }} onClick={() => setNameLocked(false)}>✏️ Edit</button>
+              <button className="set-btn" style={{ background: C.secondary, color: C.text }} onClick={() => setNameLocked(false)}>✏️ Edit</button>
             ) : (
               <button className="set-btn" onClick={lockName}>Set →</button>
             )}
           </div>
-          {nameLocked && (
-            <div style={{ fontSize: "0.8rem", color: C.secondary, fontWeight: 600, marginTop: "0.4rem" }}>
-              ✓ Ready as <strong>{playerName}</strong>
-            </div>
-          )}
+          {nameLocked && <div style={{ fontSize: "0.8rem", color: C.secondary, fontWeight: 600, marginTop: "0.4rem" }}>✓ Ready as <strong>{playerName}</strong></div>}
         </div>
-
-        {/* Primary actions */}
-        <button
-          className="btn-primary"
-          onClick={createRoom}
-          disabled={loading || !playerName.trim()}
-          style={{ width: "100%", marginBottom: "0.75rem", padding: "1.1rem", fontSize: "1rem" }}
-        >
-          🔥 CREATE ROOM
-        </button>
-
-        {/* Join room */}
+        <button className="btn-primary" onClick={createRoom} disabled={loading || !playerName.trim()} style={{ width: "100%", marginBottom: "0.75rem", padding: "1.1rem", fontSize: "1rem" }}>🔥 CREATE ROOM</button>
         <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.75rem" }}>
-          <input
-            type="text"
-            placeholder="Room code..."
-            value={roomCode}
-            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-            onKeyDown={(e) => e.key === "Enter" && joinRoom()}
-            style={{ flex: 1, margin: 0 }}
-          />
-          <button
-            className="btn-outline"
-            onClick={joinRoom}
-            disabled={loading || !playerName.trim() || !roomCode.trim()}
-            style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}
-          >
-            JOIN
-          </button>
+          <input type="text" placeholder="Room code..." value={roomCode} onChange={(e) => setRoomCode(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === "Enter" && joinRoom()} style={{ flex: 1, margin: 0 }} />
+          <button className="btn-outline" onClick={joinRoom} disabled={loading || !playerName.trim() || !roomCode.trim()} style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}>JOIN</button>
         </div>
-
         <div className="divider-row">or play solo</div>
-
-        {/* Solo Arena */}
-        <button
-          className="btn-secondary"
-          onClick={createSoloRoom}
-          disabled={loading || !playerName.trim()}
-          style={{ width: "100%", marginBottom: "1.75rem", padding: "1rem" }}
-        >
-          🤖 SOLO ARENA — Play vs AI Bots
-        </button>
-
-        {/* Stats / Leaderboard */}
+        <button className="btn-secondary" onClick={createSoloRoom} disabled={loading || !playerName.trim()} style={{ width: "100%", marginBottom: "1.75rem", padding: "1rem" }}>🤖 SOLO ARENA — Play vs AI Bots</button>
         <div className="action-grid">
-          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ textAlign: "center", padding: "0.85rem" }}>
-            📊 My Stats
-          </button>
-          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ textAlign: "center", padding: "0.85rem" }}>
-            🏆 Leaderboard
-          </button>
+          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ textAlign: "center", padding: "0.85rem" }}>📊 My Stats</button>
+          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ textAlign: "center", padding: "0.85rem" }}>🏆 Leaderboard</button>
         </div>
-
-        {/* Address hint */}
-        <div style={{ marginTop: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.78rem" }}>
-          Your ID: <code style={{ color: C.text }}>{playerAddress ? playerAddress.slice(0, 14) + "..." : "—"}</code>
-        </div>
+        <div style={{ marginTop: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.78rem" }}>Your ID: <code style={{ color: C.text }}>{playerAddress ? playerAddress.slice(0, 14) + "..." : "—"}</code></div>
       </div>
     </div>
   );
 
-  // ============================================
-  // RENDER: LOBBY
-  // ============================================
   const renderLobby = () => {
     if (!currentRoom) return null;
     const isHost = currentRoom.host === playerAddress;
     const isSolo = currentRoom.solo_mode === true;
     const canStart = isHost && currentRoom.players.length >= (isSolo ? 1 : 3);
     const myPlayer = currentRoom.players.find(p => p.address === playerAddress);
-
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-            <div>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>
-                {isSolo ? "SOLO ARENA" : "LOBBY"}
-              </div>
-              <div style={{ color: C.muted, fontSize: "0.9rem" }}>Room: <strong>{currentRoom.room_code}</strong></div>
-            </div>
-            <div style={{ display: "flex", gap: "0.65rem" }}>
-              <button className="btn-outline" onClick={copyRoomCode} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>📋 Copy</button>
-              <button className="btn-outline" onClick={goHome} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>← Leave</button>
-            </div>
+            <div><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>{isSolo ? "SOLO ARENA" : "LOBBY"}</div><div style={{ color: C.muted, fontSize: "0.9rem" }}>Room: <strong>{currentRoom.room_code}</strong></div></div>
+            <div style={{ display: "flex", gap: "0.65rem" }}><button className="btn-outline" onClick={copyRoomCode} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>📋 Copy</button><button className="btn-outline" onClick={goHome} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>← Leave</button></div>
           </div>
-
           <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-              Players ({currentRoom.players.length}/5)
-            </div>
+            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Players ({currentRoom.players.length}/5)</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {currentRoom.players.map((p) => (
-                <div key={p.address} style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "0.9rem 1rem",
-                  borderRadius: 10,
-                  background: p.address === playerAddress ? `${C.primary}10` : C.bg,
-                  border: `1.5px solid ${p.address === playerAddress ? C.primary + "40" : C.border}`,
-                }}>
+                <div key={p.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.9rem 1rem", borderRadius: 10, background: p.address === playerAddress ? `${C.primary}10` : C.bg, border: `1.5px solid ${p.address === playerAddress ? C.primary + "40" : C.border}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                     <div style={{ fontSize: "1.5rem" }}>{p.address.startsWith("bot_") ? "🤖" : "👤"}</div>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                        {p.name}
-                        {p.address === currentRoom.host && <span style={{ color: C.fire, marginLeft: "0.5rem", fontSize: "0.8rem" }}>👑 HOST</span>}
-                      </div>
-                      <div style={{ color: C.muted, fontSize: "0.78rem" }}>{p.address.slice(0, 12)}...</div>
-                    </div>
+                    <div><div style={{ fontWeight: 600, fontSize: "0.95rem" }}>{p.name}{p.address === currentRoom.host && <span style={{ color: C.fire, marginLeft: "0.5rem", fontSize: "0.8rem" }}>👑 HOST</span>}</div><div style={{ color: C.muted, fontSize: "0.78rem" }}>{p.address.slice(0, 12)}...</div></div>
                   </div>
-                  <div>
-                    {p.ready ? (
-                      <div style={{ color: C.secondary, fontWeight: 700, fontSize: "0.85rem" }}>✓ READY</div>
-                    ) : (
-                      <div style={{ color: C.muted, fontSize: "0.85rem" }}>Waiting...</div>
-                    )}
-                  </div>
+                  <div>{p.ready ? <div style={{ color: C.secondary, fontWeight: 700, fontSize: "0.85rem" }}>✓ READY</div> : <div style={{ color: C.muted, fontSize: "0.85rem" }}>Waiting...</div>}</div>
                 </div>
               ))}
             </div>
           </div>
-
-          {!isSolo && (
-            <div className="card" style={{ background: `${C.fire}10`, borderColor: `${C.fire}40`, marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.9rem", color: C.text }}>
-                <strong>Share this code:</strong> <span style={{ color: C.fire, fontWeight: 700, fontSize: "1.1rem" }}>{currentRoom.room_code}</span>
-                <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: "0.25rem" }}>Friends can join from the homepage</div>
-              </div>
-            </div>
-          )}
-
+          {!isSolo && <div className="card" style={{ background: `${C.fire}10`, borderColor: `${C.fire}40`, marginBottom: "1.5rem" }}><div style={{ fontSize: "0.9rem", color: C.text }}><strong>Share this code:</strong> <span style={{ color: C.fire, fontWeight: 700, fontSize: "1.1rem" }}>{currentRoom.room_code}</span><div style={{ color: C.muted, fontSize: "0.85rem", marginTop: "0.25rem" }}>Friends can join from the homepage</div></div></div>}
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            {isHost ? (
-              <button className="btn-primary" onClick={startGame} disabled={!canStart || loading} style={{ flex: 1 }}>
-                {canStart ? "🚀 Start Game" : `Need ${isSolo ? 1 : 3}+ players`}
-              </button>
-            ) : (
-              <button className="btn-outline" onClick={toggleReady} disabled={loading || isSolo} style={{ flex: 1 }}>
-                {myPlayer?.ready ? "❌ Not Ready" : "✓ Ready Up"}
-              </button>
-            )}
+            {isHost ? <button className="btn-primary" onClick={startGame} disabled={!canStart || loading} style={{ flex: 1 }}>{canStart ? "🚀 Start Game" : `Need ${isSolo ? 1 : 3}+ players`}</button> : <button className="btn-outline" onClick={toggleReady} disabled={loading || isSolo} style={{ flex: 1 }}>{myPlayer?.ready ? "❌ Not Ready" : "✓ Ready Up"}</button>}
           </div>
-
-          {isSolo && (
-            <div className="card" style={{ marginTop: "1.5rem", background: `${C.secondary}10`, borderColor: `${C.secondary}40` }}>
-              <div style={{ fontSize: "0.9rem", color: C.text }}>
-                <strong>🤖 AI Bot Lineup:</strong>
-                <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                  {["AgreeBot", "DevilBot", "JokerBot", "ThinkBot"].map(bot => (
-                    <div key={bot} style={{ fontSize: "0.85rem", color: C.muted }}>• {bot}</div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+          {isSolo && <div className="card" style={{ marginTop: "1.5rem", background: `${C.secondary}10`, borderColor: `${C.secondary}40` }}><div style={{ fontSize: "0.9rem", color: C.text }}><strong>🤖 AI Bot Lineup:</strong><div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>{["AgreeBot", "DevilBot", "JokerBot", "ThinkBot"].map(bot => <div key={bot} style={{ fontSize: "0.85rem", color: C.muted }}>• {bot}</div>)}</div></div></div>}
         </div>
       </div>
     );
   };
 
-  // ============================================
-  // RENDER: GAME
-  // ============================================
   const renderGame = () => {
     if (!currentRoom) return null;
     const mySubmission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(playerAddress));
     const hasSubmitted = !!mySubmission;
     const isRound1 = currentRoom.status === "round_1";
     const isRound2 = currentRoom.status === "round_2";
-
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>
-              {isRound1 ? "ROUND 1: HOT TAKES" : "ROUND 2: VOTING"}
-            </div>
-            <div style={{ color: C.muted, fontSize: "0.85rem" }}>Room: {currentRoom.room_code}</div>
-          </div>
-
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>{isRound1 ? "ROUND 1: HOT TAKES" : "ROUND 2: VOTING"}</div><div style={{ color: C.muted, fontSize: "0.85rem" }}>Room: {currentRoom.room_code}</div></div>
           {isRound1 && (
             <>
               {!hasSubmitted ? (
                 <>
-                  <div className="card" style={{ marginBottom: "1.5rem" }}>
-                    <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Choose Your Scenario</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-                      {currentRoom.scenarios.map((s, i) => (
-                        <div
-                          key={i}
-                          onClick={() => setSelectedScenario(i)}
-                          style={{
-                            padding: "1rem 1.25rem",
-                            borderRadius: 12,
-                            border: `2px solid ${selectedScenario === i ? C.primary : C.border}`,
-                            background: selectedScenario === i ? `${C.primary}08` : C.surface,
-                            cursor: "pointer",
-                            transition: "all 0.2s",
-                          }}
-                        >
-                          <div style={{ fontWeight: 700, marginBottom: "0.3rem", color: selectedScenario === i ? C.primary : C.text }}>
-                            {s.title}
-                          </div>
-                          <div style={{ fontSize: "0.85rem", color: C.muted }}>{s.description}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {selectedScenario !== null && (
-                    <div className="card slide-up" style={{ marginBottom: "1.5rem" }}>
-                      <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>Your Stance</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.25rem" }}>
-                        {[
-                          { value: "genius", label: "🔥 Genius", class: "stance-genius" },
-                          { value: "trash", label: "🗑️ Trash", class: "stance-trash" },
-                          { value: "spicy", label: "😈 Spicy", class: "stance-spicy" },
-                        ].map(({ value, label, class: className }) => (
-                          <div
-                            key={value}
-                            onClick={() => setSelectedStance(value)}
-                            className={className}
-                            style={{
-                              padding: "0.85rem",
-                              borderRadius: 10,
-                              textAlign: "center",
-                              fontWeight: 700,
-                              fontSize: "0.9rem",
-                              cursor: "pointer",
-                              border: `2px solid ${selectedStance === value ? "#1A202C" : "transparent"}`,
-                              opacity: selectedStance === value ? 1 : 0.7,
-                              transition: "all 0.2s",
-                            }}
-                          >
-                            {label}
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ fontWeight: 700, marginBottom: "0.75rem", fontSize: "1rem" }}>Your Take (100 chars max)</div>
-                      <textarea
-                        placeholder="Write your hot take..."
-                        value={takeText}
-                        onChange={(e) => setTakeText(e.target.value.slice(0, 100))}
-                        style={{ marginBottom: "0.5rem" }}
-                      />
-                      <div style={{ textAlign: "right", color: C.muted, fontSize: "0.85rem", marginBottom: "1rem" }}>
-                        {takeText.length}/100
-                      </div>
-                      <button
-                        className="btn-primary"
-                        onClick={submitTake}
-                        disabled={!selectedStance || !takeText.trim() || loading}
-                        style={{ width: "100%" }}
-                      >
-                        🔥 Submit Take
-                      </button>
-                    </div>
-                  )}
+                  <div className="card" style={{ marginBottom: "1.5rem" }}><div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Choose Your Scenario</div><div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>{currentRoom.scenarios.map((s, i) => (<div key={i} onClick={() => setSelectedScenario(i)} style={{ padding: "1rem 1.25rem", borderRadius: 12, border: `2px solid ${selectedScenario === i ? C.primary : C.border}`, background: selectedScenario === i ? `${C.primary}08` : C.surface, cursor: "pointer", transition: "all 0.2s" }}><div style={{ fontWeight: 700, marginBottom: "0.3rem", color: selectedScenario === i ? C.primary : C.text }}>{s.title}</div><div style={{ fontSize: "0.85rem", color: C.muted }}>{s.description}</div></div>))}</div></div>
+                  {selectedScenario !== null && (<div className="card slide-up" style={{ marginBottom: "1.5rem" }}><div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>Your Stance</div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.25rem" }}>{[{ value: "genius", label: "🔥 Genius", class: "stance-genius" }, { value: "trash", label: "🗑️ Trash", class: "stance-trash" }, { value: "spicy", label: "😈 Spicy", class: "stance-spicy" }].map(({ value, label, class: className }) => (<div key={value} onClick={() => setSelectedStance(value)} className={className} style={{ padding: "0.85rem", borderRadius: 10, textAlign: "center", fontWeight: 700, fontSize: "0.9rem", cursor: "pointer", border: `2px solid ${selectedStance === value ? "#1A202C" : "transparent"}`, opacity: selectedStance === value ? 1 : 0.7, transition: "all 0.2s" }}>{label}</div>))}</div><div style={{ fontWeight: 700, marginBottom: "0.75rem", fontSize: "1rem" }}>Your Take (100 chars max)</div><textarea placeholder="Write your hot take..." value={takeText} onChange={(e) => setTakeText(e.target.value.slice(0, 100))} style={{ marginBottom: "0.5rem" }} /><div style={{ textAlign: "right", color: C.muted, fontSize: "0.85rem", marginBottom: "1rem" }}>{takeText.length}/100</div><button className="btn-primary" onClick={submitTake} disabled={!selectedStance || !takeText.trim() || loading} style={{ width: "100%" }}>🔥 Submit Take</button></div>)}
                 </>
-              ) : (
-                <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✓</div>
-                  <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div>
-                  <div style={{ color: C.muted, marginBottom: "1.5rem" }}>Waiting for other players...</div>
-                  <div className="pulse" style={{ color: C.fire, fontSize: "0.9rem" }}>
-                    {currentRoom.players.filter(p => Object.keys(currentRoom.submissions).some(k => k.startsWith(p.address))).length}/{currentRoom.players.length} submitted
-                  </div>
-                </div>
-              )}
+              ) : (<div className="card" style={{ textAlign: "center", padding: "3rem" }}><div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✓</div><div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div><div style={{ color: C.muted, marginBottom: "1.5rem" }}>Waiting for other players...</div><div className="pulse" style={{ color: C.fire, fontSize: "0.9rem" }}>{currentRoom.players.filter(p => Object.keys(currentRoom.submissions).some(k => k.startsWith(p.address))).length}/{currentRoom.players.length} submitted</div></div>)}
             </>
           )}
-
           {isRound2 && (
             <>
-              <div className="card" style={{ marginBottom: "1.5rem" }}>
-                <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-                  Vote for the Best Takes (select up to 3)
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-                  {currentRoom.players
-                    .filter(p => p.address !== playerAddress)
-                    .map(p => {
-                      const submission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(p.address));
-                      if (!submission) return null;
-                      const [, data] = submission;
-                      const scenario = currentRoom.scenarios[data.scenario_index];
-                      const isVoted = Object.values(votes).includes(p.address);
-                      
-                      return (
-                        <div
-                          key={p.address}
-                          onClick={() => {
-                            if (Object.keys(votes).length >= 3 && !isVoted) return;
-                            const newVotes = { ...votes };
-                            const existingKey = Object.keys(newVotes).find(k => newVotes[k] === p.address);
-                            if (existingKey) {
-                              delete newVotes[existingKey];
-                            } else {
-                              newVotes[Date.now().toString()] = p.address;
-                            }
-                            setVotes(newVotes);
-                          }}
-                          style={{
-                            padding: "1rem 1.25rem",
-                            borderRadius: 12,
-                            border: `2px solid ${isVoted ? C.primary : C.border}`,
-                            background: isVoted ? `${C.primary}08` : C.surface,
-                            cursor: "pointer",
-                            transition: "all 0.2s",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.name}</div>
-                              <div style={{ fontSize: "0.78rem", color: C.muted }}>{scenario?.title}</div>
-                            </div>
-                            <div className={`stance-${data.stance}`} style={{ padding: "0.4rem 0.75rem", borderRadius: 8, fontSize: "0.75rem", fontWeight: 700 }}>
-                              {data.stance === "genius" ? "🔥" : data.stance === "trash" ? "🗑️" : "😈"}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: "0.9rem", fontStyle: "italic", color: C.text }}>
-                            "{data.take}"
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-              <div style={{ marginBottom: "1rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>
-                {Object.keys(votes).length}/3 votes cast
-              </div>
-              <button
-                className="btn-primary"
-                onClick={submitVotes}
-                disabled={Object.keys(votes).length === 0 || loading}
-                style={{ width: "100%" }}
-              >
-                Submit Votes ({Object.keys(votes).length})
-              </button>
+              <div className="card" style={{ marginBottom: "1.5rem" }}><div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Vote for the Best Takes (select up to 3)</div><div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>{currentRoom.players.filter(p => p.address !== playerAddress).map(p => { const submission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(p.address)); if (!submission) return null; const [, data] = submission; const scenario = currentRoom.scenarios[data.scenario_index]; const isVoted = Object.values(votes).includes(p.address); return (<div key={p.address} onClick={() => { if (Object.keys(votes).length >= 3 && !isVoted) return; const newVotes = { ...votes }; const existingKey = Object.keys(newVotes).find(k => newVotes[k] === p.address); if (existingKey) delete newVotes[existingKey]; else newVotes[Date.now().toString()] = p.address; setVotes(newVotes); }} style={{ padding: "1rem 1.25rem", borderRadius: 12, border: `2px solid ${isVoted ? C.primary : C.border}`, background: isVoted ? `${C.primary}08` : C.surface, cursor: "pointer", transition: "all 0.2s" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}><div><div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.name}</div><div style={{ fontSize: "0.78rem", color: C.muted }}>{scenario?.title}</div></div><div className={`stance-${data.stance}`} style={{ padding: "0.4rem 0.75rem", borderRadius: 8, fontSize: "0.75rem", fontWeight: 700 }}>{data.stance === "genius" ? "🔥" : data.stance === "trash" ? "🗑️" : "😈"}</div></div><div style={{ fontSize: "0.9rem", fontStyle: "italic", color: C.text }}>"{data.take}"</div></div>); })}</div></div>
+              <div style={{ marginBottom: "1rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>{Object.keys(votes).length}/3 votes cast</div>
+              <button className="btn-primary" onClick={submitVotes} disabled={Object.keys(votes).length === 0 || loading} style={{ width: "100%" }}>Submit Votes ({Object.keys(votes).length})</button>
             </>
           )}
         </div>
@@ -1131,247 +771,45 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ============================================
-  // RENDER: RESULTS
-  // ============================================
   const renderResults = () => {
     if (!currentRoom || !currentRoom.results) return null;
     const { final_scores, ai_rankings } = currentRoom.results;
-    const sortedScores = Object.entries(final_scores || {})
-      .map(([addr, data]: [string, any]) => ({ address: addr, ...data }))
-      .sort((a: any, b: any) => b.total - a.total);
-
+    const sortedScores = Object.entries(final_scores || {}).map(([addr, data]: [string, any]) => ({ address: addr, ...data })).sort((a: any, b: any) => b.total - a.total);
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
-            <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>
-              {sortedScores[0]?.address === playerAddress ? "🏆" : "🔥"}
-            </div>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3rem", letterSpacing: "0.06em" }}>
-              {sortedScores[0]?.address === playerAddress ? "VICTORY!" : "GAME OVER"}
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Final Scores</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {sortedScores.map((score: any, i: number) => {
-                const medals = ["🥇", "🥈", "🥉"];
-                return (
-                  <div key={score.address} style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "1rem 1.25rem",
-                    borderRadius: 12,
-                    background: score.address === playerAddress ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg,
-                    border: `2px solid ${score.address === playerAddress ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.5rem", minWidth: 32 }}>{medals[i] || `${i + 1}.`}</div>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>
-                          {score.player_name}
-                          {score.address === playerAddress && <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>}
-                        </div>
-                        <div style={{ fontSize: "0.78rem", color: C.muted }}>
-                          AI: {score.ai_points}pts · Votes: +{score.vote_bonus}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.75rem", color: i === 0 ? C.gold : C.text }}>
-                      {score.total}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {ai_rankings && (
-            <div className="card" style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>🤖 AI Judge Reasoning</div>
-              {Object.entries(ai_rankings).map(([scenarioKey, rankings]: [string, any]) => {
-                const scenarioIdx = parseInt(scenarioKey.replace("scenario_", ""));
-                const scenario = currentRoom.scenarios[scenarioIdx];
-                return (
-                  <div key={scenarioKey} style={{ marginBottom: "1rem" }}>
-                    <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>
-                      {scenario?.title || scenarioKey}
-                    </div>
-                    {Array.isArray(rankings) && rankings.map((rank: any) => {
-                      const pName = currentRoom.players.find(p => p.address === rank.player)?.name || rank.player?.slice(0, 8) + "...";
-                      return (
-                        <div key={rank.player} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 0.85rem", background: C.bg, borderRadius: 8, marginBottom: "0.5rem" }}>
-                          <div style={{ color: rank.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24, fontSize: "0.9rem" }}>
-                            #{rank.rank}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>
-                              {pName} · <span style={{ color: C.muted, fontWeight: 400 }}>{rank.score}pts</span>
-                            </div>
-                            <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>
-                              {rank.reasoning}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>
-              🔥 Play Again
-            </button>
-            <button className="btn-outline" onClick={goHome}>🏠 Home</button>
-          </div>
+          <div style={{ textAlign: "center", marginBottom: "2.5rem" }}><div style={{ fontSize: "4rem", marginBottom: "1rem" }}>{sortedScores[0]?.address === playerAddress ? "🏆" : "🔥"}</div><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3rem", letterSpacing: "0.06em" }}>{sortedScores[0]?.address === playerAddress ? "VICTORY!" : "GAME OVER"}</div></div>
+          <div className="card" style={{ marginBottom: "1.5rem" }}><div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Final Scores</div><div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>{sortedScores.map((score: any, i: number) => { const medals = ["🥇", "🥈", "🥉"]; return (<div key={score.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem 1.25rem", borderRadius: 12, background: score.address === playerAddress ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg, border: `2px solid ${score.address === playerAddress ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}` }}><div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}><div style={{ fontSize: "1.5rem", minWidth: 32 }}>{medals[i] || `${i + 1}.`}</div><div><div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{score.player_name}{score.address === playerAddress && <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>}</div><div style={{ fontSize: "0.78rem", color: C.muted }}>AI: {score.ai_points}pts · Votes: +{score.vote_bonus}</div></div></div><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.75rem", color: i === 0 ? C.gold : C.text }}>{score.total}</div></div>); })}</div></div>
+          {ai_rankings && (<div className="card" style={{ marginBottom: "1.5rem" }}><div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>🤖 AI Judge Reasoning</div>{Object.entries(ai_rankings).map(([scenarioKey, rankings]: [string, any]) => { const scenarioIdx = parseInt(scenarioKey.replace("scenario_", "")); const scenario = currentRoom.scenarios[scenarioIdx]; return (<div key={scenarioKey} style={{ marginBottom: "1rem" }}><div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>{scenario?.title || scenarioKey}</div>{Array.isArray(rankings) && rankings.map((rank: any) => { const pName = currentRoom.players.find(p => p.address === rank.player)?.name || rank.player?.slice(0, 8) + "..."; return (<div key={rank.player} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 0.85rem", background: C.bg, borderRadius: 8, marginBottom: "0.5rem" }}><div style={{ color: rank.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24, fontSize: "0.9rem" }}>#{rank.rank}</div><div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: "0.88rem" }}>{pName} · <span style={{ color: C.muted, fontWeight: 400 }}>{rank.score}pts</span></div><div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>{rank.reasoning}</div></div></div>); })}</div>); })}</div>)}
+          <div style={{ display: "flex", gap: "0.75rem" }}><button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>🔥 Play Again</button><button className="btn-outline" onClick={goHome}>🏠 Home</button></div>
         </div>
       </div>
     );
   };
 
-  // ============================================
-  // RENDER: STATS
-  // ============================================
   const renderStats = () => {
     const [myStats, setMyStats] = useState<any>(null);
     const [statsLoading, setStatsLoading] = useState(true);
-
-    useEffect(() => {
-      if (!CONTRACT_ADDRESS || !playerAddress) { setStatsLoading(false); return; }
-      readContract("get_player_stats", [playerAddress])
-        .then(raw => { if (raw) setMyStats(JSON.parse(raw as string)); })
-        .catch(() => {})
-        .finally(() => setStatsLoading(false));
-    }, []);
-
+    useEffect(() => { readContract("get_player_stats", [playerAddress]).then(raw => { if (raw) setMyStats(JSON.parse(raw as string)); }).catch(() => {}).finally(() => setStatsLoading(false)); }, [playerAddress]);
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
-        <div style={{ maxWidth: 580, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>MY STATS</div>
-            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
-          </div>
-          {statsLoading ? (
-            <div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}>
-              <div className="spin" style={{ fontSize: "2.5rem" }}>🔥</div>
-              <div style={{ marginTop: "1rem" }}>Loading stats...</div>
-            </div>
-          ) : myStats ? (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
-                {[
-                  { label: "Games Played", value: myStats.games_played, icon: "🎮" },
-                  { label: "Wins", value: myStats.wins, icon: "🏆" },
-                  { label: "Total Points", value: myStats.total_points, icon: "🔥" },
-                  { label: "Win Rate", value: myStats.games_played > 0 ? `${Math.round(myStats.wins / myStats.games_played * 100)}%` : "—", icon: "📊" },
-                ].map(stat => (
-                  <div key={stat.label} className="card" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{stat.icon}</div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>{stat.value}</div>
-                    <div style={{ color: C.muted, fontSize: "0.85rem" }}>{stat.label}</div>
-                  </div>
-                ))}
-              </div>
-              {myStats.best_performance && (
-                <div className="card" style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}>
-                  <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>🏅 Best Performance</div>
-                  <div style={{ color: C.muted, fontSize: "0.9rem" }}>
-                    Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🎮</div>
-              {playerAddress ? "No games played yet. Get in there!" : "Set your name to view stats."}
-            </div>
-          )}
+        <div style={{ maxWidth: 580, margin: "0 auto" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>MY STATS</div><button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button></div>
+        {statsLoading ? (<div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}><div className="spin" style={{ fontSize: "2.5rem" }}>🔥</div><div style={{ marginTop: "1rem" }}>Loading stats...</div></div>) : myStats ? (<><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>{[{ label: "Games Played", value: myStats.games_played, icon: "🎮" }, { label: "Wins", value: myStats.wins, icon: "🏆" }, { label: "Total Points", value: myStats.total_points, icon: "🔥" }, { label: "Win Rate", value: myStats.games_played > 0 ? `${Math.round(myStats.wins / myStats.games_played * 100)}%` : "—", icon: "📊" }].map(stat => (<div key={stat.label} className="card" style={{ textAlign: "center" }}><div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{stat.icon}</div><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>{stat.value}</div><div style={{ color: C.muted, fontSize: "0.85rem" }}>{stat.label}</div></div>))}</div>{myStats.best_performance && (<div className="card" style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}><div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>🏅 Best Performance</div><div style={{ color: C.muted, fontSize: "0.9rem" }}>Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}</div></div>)}</>) : (<div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}><div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🎮</div>{playerAddress ? "No games played yet. Get in there!" : "Set your name to view stats."}</div>)}
         </div>
       </div>
     );
   };
 
-  // ============================================
-  // RENDER: LEADERBOARD
-  // ============================================
   const renderLeaderboard = () => (
     <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
       <div style={{ maxWidth: 680, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🏆 LEADERBOARD</div>
-          <div style={{ display: "flex", gap: "0.65rem" }}>
-            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>↻ Refresh</button>
-            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
-          </div>
-        </div>
-        {leaderboard.length === 0 ? (
-          <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🏆</div>
-            No players on the leaderboard yet. Play some games!
-          </div>
-        ) : (
-          <div className="card">
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
-              {leaderboard.map((entry, i) => {
-                const medals = ["🥇", "🥈", "🥉"];
-                const isMe = entry.address === playerAddress;
-                return (
-                  <div key={entry.address} style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "1rem 1.1rem",
-                    borderRadius: 10,
-                    background: isMe ? `${C.primary}10` : i === 0 ? `${C.gold}08` : C.bg,
-                    border: `1.5px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "30" : C.border}`,
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.3rem", minWidth: 28 }}>{medals[i] || `${i + 1}.`}</div>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                          {entry.address.slice(0, 10)}...
-                          {isMe && <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.78rem" }}> (you)</span>}
-                        </div>
-                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>{entry.games_played} games · {entry.wins} wins</div>
-                      </div>
-                    </div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", color: i === 0 ? C.gold : C.text }}>
-                      {entry.total_points} <span style={{ fontSize: "0.65rem", color: C.muted }}>pts</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🏆 LEADERBOARD</div><div style={{ display: "flex", gap: "0.65rem" }}><button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>↻ Refresh</button><button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button></div></div>
+        {leaderboard.length === 0 ? (<div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}><div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🏆</div>No players on the leaderboard yet. Play some games!</div>) : (<div className="card"><div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>{leaderboard.map((entry, i) => { const medals = ["🥇", "🥈", "🥉"]; const isMe = entry.address === playerAddress; return (<div key={entry.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem 1.1rem", borderRadius: 10, background: isMe ? `${C.primary}10` : i === 0 ? `${C.gold}08` : C.bg, border: `1.5px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "30" : C.border}` }}><div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}><div style={{ fontSize: "1.3rem", minWidth: 28 }}>{medals[i] || `${i + 1}.`}</div><div><div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{entry.address.slice(0, 10)}...{isMe && <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.78rem" }}> (you)</span>}</div><div style={{ color: C.muted, fontSize: "0.78rem" }}>{entry.games_played} games · {entry.wins} wins</div></div></div><div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", color: i === 0 ? C.gold : C.text }}>{entry.total_points} <span style={{ fontSize: "0.65rem", color: C.muted }}>pts</span></div></div>); })}</div></div>)}
       </div>
     </div>
   );
 
-  // ============================================
-  // ROUTER
-  // ============================================
   const renderScreen = () => {
-    if (envError) return (
-      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }}>
-        <div className="card" style={{ maxWidth: 540, textAlign: "center" }}>
-          <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>⚠️</div>
-          <div style={{ fontWeight: 700, color: C.primary, marginBottom: "0.75rem", fontSize: "1.1rem" }}>Configuration Error</div>
-          <div style={{ color: C.muted, marginBottom: "1rem", fontSize: "0.95rem" }}>{envError}</div>
-          <code style={{ display: "block", background: C.bg, padding: "0.85rem", borderRadius: 8, fontSize: "0.85rem", color: C.text, border: `1px solid ${C.border}` }}>
-            NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
-          </code>
-        </div>
-      </div>
-    );
-
     switch (screen) {
       case "landing": return renderLanding();
       case "lobby": return renderLobby();
