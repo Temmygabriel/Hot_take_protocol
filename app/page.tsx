@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createClient, createAccount } from "genlayer-js";
+import { studionet } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 
-// Types
+// ============================================
+// TYPES (match contract)
+// ============================================
 type Screen = "landing" | "lobby" | "game" | "results" | "stats" | "leaderboard";
 type GamePhase = "lobby" | "round_1" | "round_2" | "completed";
 
@@ -27,16 +32,71 @@ interface Room {
   players: Player[];
   status: GamePhase;
   scenarios: Scenario[];
-  submissions: any;
-  votes: any;
+  submissions: Record<string, any>;
+  votes: Record<string, any>;
   results: any;
   current_round: number;
+  solo_mode?: boolean;
 }
 
+// ============================================
+// CONTRACT HELPERS
+// ============================================
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
+if (!CONTRACT_ADDRESS) {
+  throw new Error("Missing NEXT_PUBLIC_CONTRACT_ADDRESS env variable");
+}
+
+// Get or create a persistent account (store in localStorage)
+function getAccount() {
+  const stored = localStorage.getItem("genlayer_account");
+  if (stored) {
+    return JSON.parse(stored);
+  }
+  const account = createAccount();
+  localStorage.setItem("genlayer_account", JSON.stringify(account));
+  return account;
+}
+
+function getClient() {
+  const account = getAccount();
+  return createClient({ chain: studionet, account });
+}
+
+async function readContract(functionName: string, args: any[]): Promise<any> {
+  const client = getClient();
+  const result = await client.readContract({
+    address: CONTRACT_ADDRESS,
+    functionName,
+    args,
+  });
+  return result;
+}
+
+async function writeContract(functionName: string, args: any[]): Promise<void> {
+  const client = getClient();
+  const hash = await client.writeContract({
+    address: CONTRACT_ADDRESS,
+    functionName,
+    args,
+    value: BigInt(0),
+    leaderOnly: true, // faster
+  });
+  await client.waitForTransactionReceipt({
+    hash,
+    status: TransactionStatus.ACCEPTED,
+    retries: 60,
+    interval: 3000,
+  });
+}
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 export default function HotTakeProtocol() {
   // State
   const [screen, setScreen] = useState<Screen>("landing");
-  const [playerAddress] = useState<string>(() => `player_${Math.random().toString(36).substr(2, 9)}`);
+  const [playerAddress, setPlayerAddress] = useState<string>("");
   const [playerName, setPlayerName] = useState<string>("");
   const [roomCode, setRoomCode] = useState<string>("");
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
@@ -44,125 +104,154 @@ export default function HotTakeProtocol() {
   const [stance, setStance] = useState<string>("");
   const [hotTake, setHotTake] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [submitted, setSubmitted] = useState<boolean>(false);
+  const pollInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // Mock contract calls (replace with actual genlayer-js integration)
-  const createRoom = async (isSolo: boolean = false) => {
-    setLoading(true);
-    // Mock: In production, call contract's create_room or create_solo_room
-    setTimeout(() => {
-      const mockRoom: Room = {
-        room_code: generateRoomCode(),
-        host: playerAddress,
-        players: [{ address: playerAddress, name: playerName, ready: false }],
-        status: "lobby",
-        scenarios: [],
-        submissions: {},
-        votes: {},
-        results: {},
-        current_round: 0,
-      };
-      
-      if (isSolo) {
-        // Add AI bots
-        mockRoom.players.push(
-          { address: "bot_agreeable", name: "AgreeBot", ready: true },
-          { address: "bot_contrarian", name: "DevilBot", ready: true },
-          { address: "bot_funny", name: "JokerBot", ready: true },
-          { address: "bot_serious", name: "ThinkBot", ready: true }
-        );
+  // Load player address from account
+  useEffect(() => {
+    const account = getAccount();
+    setPlayerAddress(account.address);
+  }, []);
+
+  // Poll room updates when in lobby/game
+  const fetchRoom = useCallback(async (code: string) => {
+    try {
+      const roomJson = await readContract("get_room", [code]);
+      if (roomJson) {
+        const room: Room = JSON.parse(roomJson as string);
+        setCurrentRoom(room);
+        // Auto-advance screen based on room status
+        if (room.status === "round_1" && screen === "lobby") {
+          setScreen("game");
+        } else if (room.status === "round_2" && screen === "game") {
+          setScreen("game"); // stay in game screen but show voting
+        } else if (room.status === "completed" && screen !== "results") {
+          setScreen("results");
+        }
       }
-      
-      setCurrentRoom(mockRoom);
-      setRoomCode(mockRoom.room_code);
+    } catch (err) {
+      console.error("Failed to fetch room", err);
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    if (roomCode && (screen === "lobby" || screen === "game")) {
+      fetchRoom(roomCode);
+      pollInterval.current = setInterval(() => fetchRoom(roomCode), 4000);
+      return () => {
+        if (pollInterval.current) clearInterval(pollInterval.current);
+      };
+    }
+  }, [roomCode, screen, fetchRoom]);
+
+  // Contract actions
+  const createRoom = async (isSolo: boolean = false) => {
+    if (!playerName) return;
+    setLoading(true);
+    try {
+      let code: string;
+      if (isSolo) {
+        code = await writeContract("create_solo_room", [playerAddress, playerName]);
+      } else {
+        code = await writeContract("create_room", [playerAddress, playerName]);
+      }
+      setRoomCode(code);
+      await fetchRoom(code);
       setScreen("lobby");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create room. Check console.");
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const joinRoom = async (code: string) => {
+    if (!playerName) return;
     setLoading(true);
-    // Mock: In production, call contract's join_room
-    setTimeout(() => {
-      // Mock room data
-      const mockRoom: Room = {
-        room_code: code,
-        host: "other_player",
-        players: [
-          { address: "other_player", name: "Host", ready: true },
-          { address: playerAddress, name: playerName, ready: false },
-        ],
-        status: "lobby",
-        scenarios: [],
-        submissions: {},
-        votes: {},
-        results: {},
-        current_round: 0,
-      };
-      setCurrentRoom(mockRoom);
+    try {
+      await writeContract("join_room", [code, playerAddress, playerName]);
+      setRoomCode(code);
+      await fetchRoom(code);
       setScreen("lobby");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to join room. It may be full or invalid.");
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
-  const toggleReady = () => {
-    if (!currentRoom) return;
-    const updatedPlayers = currentRoom.players.map((p) =>
-      p.address === playerAddress ? { ...p, ready: !p.ready } : p
-    );
-    setCurrentRoom({ ...currentRoom, players: updatedPlayers });
+  const toggleReady = async () => {
+    if (!roomCode) return;
+    setLoading(true);
+    try {
+      await writeContract("toggle_ready", [roomCode, playerAddress]);
+      await fetchRoom(roomCode);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startGame = async () => {
+    if (!roomCode || !currentRoom) return;
     setLoading(true);
-    // Mock: In production, call contract's start_game
-    setTimeout(() => {
-      if (!currentRoom) return;
-      
-      const mockScenarios: Scenario[] = [
-        {
-          id: 0,
-          type: "art",
-          title: "AI Art Auction",
-          description: "This AI-generated painting sold for $50,000 at a prestigious auction",
-          content: "Abstract digital artwork featuring swirling galaxies merged with geometric patterns",
-        },
-        {
-          id: 1,
-          type: "business",
-          title: "Startup Pitch",
-          description: "New startup idea: 'Uber but for houseplants'",
-          content: "PlantUber: On-demand plant care and maintenance service",
-        },
-        {
-          id: 2,
-          type: "culture",
-          title: "Viral Tweet",
-          description: "This tweet got 500K likes: 'Coffee is just bean soup'",
-          content: "Change my mind: coffee is literally just hot bean water, aka soup",
-        },
-      ];
-
-      setCurrentRoom({
-        ...currentRoom,
-        status: "round_1",
-        scenarios: mockScenarios,
-        current_round: 1,
-      });
-      setScreen("game");
+    try {
+      await writeContract("start_game", [roomCode, playerAddress]);
+      // Game will advance; polling will update
+    } catch (err) {
+      console.error(err);
+      alert("Failed to start game. Need at least 3 players?");
+    } finally {
       setLoading(false);
-    }, 2000);
+    }
   };
 
-  const submitTake = () => {
-    if (!hotTake || selectedScenario === null) return;
-    // Mock: In production, call contract's submit_take
-    alert("Take submitted! Waiting for other players...");
-    setHotTake("");
-    setStance("");
-    setSelectedScenario(null);
+  const submitTake = async () => {
+    if (!roomCode || selectedScenario === null || !stance || !hotTake.trim()) return;
+    setLoading(true);
+    try {
+      await writeContract("submit_take", [roomCode, playerAddress, selectedScenario, stance, hotTake]);
+      setSubmitted(true);
+      // Optionally, host could call advance_to_voting after all submits, but we'll let host do that via a button
+    } catch (err) {
+      console.error(err);
+      alert("Failed to submit take.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const generateRoomCode = () => {
+  const advanceToVoting = async () => {
+    if (!roomCode) return;
+    setLoading(true);
+    try {
+      await writeContract("advance_to_voting", [roomCode]);
+      await fetchRoom(roomCode);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const calculateResults = async () => {
+    if (!roomCode) return;
+    setLoading(true);
+    try {
+      await writeContract("calculate_results", [roomCode]);
+      await fetchRoom(roomCode);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper to generate a room code (only for UI, contract generates its own)
+  const generateMockRoomCode = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let code = "";
     for (let i = 0; i < 4; i++) {
@@ -171,7 +260,7 @@ export default function HotTakeProtocol() {
     return code;
   };
 
-  // Styles
+  // Styles (unchanged from your original)
   const colors = {
     bg: "#F5F7FA",
     card: "#FFFFFF",
@@ -216,30 +305,10 @@ export default function HotTakeProtocol() {
     border: `2px solid ${colors.primary}`,
   };
 
-  // Render current screen
-  const renderScreen = () => {
-    switch (screen) {
-      case "landing":
-        return renderLanding();
-      case "lobby":
-        return renderLobby();
-      case "game":
-        return renderGame();
-      case "results":
-        return renderResults();
-      case "stats":
-        return renderStats();
-      case "leaderboard":
-        return renderLeaderboard();
-      default:
-        return renderLanding();
-    }
-  };
-
+  // Render functions (same as original but with real actions)
   const renderLanding = () => (
     <div style={containerStyle}>
       <div style={{ maxWidth: 600, margin: "0 auto", padding: "4rem 2rem", textAlign: "center" }}>
-        {/* Logo/Title */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -265,7 +334,6 @@ export default function HotTakeProtocol() {
           </p>
         </motion.div>
 
-        {/* Name input */}
         {!playerName && (
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -289,16 +357,11 @@ export default function HotTakeProtocol() {
                 outline: "none",
                 boxSizing: "border-box",
               }}
-              onKeyPress={(e) => {
-                if (e.key === "Enter" && playerName.trim()) {
-                  // Name submitted
-                }
-              }}
+              onKeyPress={(e) => e.key === "Enter" && playerName.trim() && null}
             />
           </motion.div>
         )}
 
-        {/* Buttons */}
         {playerName && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -306,11 +369,7 @@ export default function HotTakeProtocol() {
             transition={{ delay: 0.4 }}
             style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
           >
-            <button
-              style={buttonStyle}
-              onClick={() => createRoom(false)}
-              disabled={loading}
-            >
+            <button style={buttonStyle} onClick={() => createRoom(false)} disabled={loading}>
               {loading ? "Creating..." : "CREATE ROOM"}
             </button>
 
@@ -337,7 +396,6 @@ export default function HotTakeProtocol() {
           </motion.div>
         )}
 
-        {/* Recent games */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -357,6 +415,7 @@ export default function HotTakeProtocol() {
                   alignItems: "center",
                   cursor: "pointer",
                 }}
+                onClick={() => joinRoom(code)}
               >
                 <div>
                   <span style={{ fontFamily: "JetBrains Mono", fontWeight: 600 }}>Room #{code}</span>
@@ -364,7 +423,7 @@ export default function HotTakeProtocol() {
                     {i + 2} min ago
                   </span>
                 </div>
-                <span style={{ color: colors.primary, fontSize: "0.9rem", fontWeight: 600 }}>View Stats →</span>
+                <span style={{ color: colors.primary, fontSize: "0.9rem", fontWeight: 600 }}>Join →</span>
               </div>
             ))}
           </div>
@@ -382,7 +441,6 @@ export default function HotTakeProtocol() {
     return (
       <div style={containerStyle}>
         <div style={{ maxWidth: 800, margin: "0 auto", padding: "4rem 2rem" }}>
-          {/* Room code */}
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -416,7 +474,6 @@ export default function HotTakeProtocol() {
             </div>
           </motion.div>
 
-          {/* Players */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -425,7 +482,7 @@ export default function HotTakeProtocol() {
           >
             <h2 style={{ marginBottom: "1.5rem", fontFamily: "Space Grotesk" }}>Players</h2>
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              {currentRoom.players.map((player, i) => (
+              {currentRoom.players.map((player) => (
                 <div
                   key={player.address}
                   style={{
@@ -495,7 +552,6 @@ export default function HotTakeProtocol() {
                 </div>
               ))}
 
-              {/* Empty slots */}
               {[...Array(5 - currentRoom.players.length)].map((_, i) => (
                 <div
                   key={`empty-${i}`}
@@ -513,7 +569,6 @@ export default function HotTakeProtocol() {
               ))}
             </div>
 
-            {/* Actions */}
             <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", justifyContent: "center" }}>
               {isHost ? (
                 <button
@@ -528,7 +583,7 @@ export default function HotTakeProtocol() {
                   {loading ? "Starting..." : `START GAME (${readyCount}/${currentRoom.players.length} ready)`}
                 </button>
               ) : (
-                <button style={buttonStyle} onClick={toggleReady}>
+                <button style={buttonStyle} onClick={toggleReady} disabled={loading}>
                   {currentRoom.players.find((p) => p.address === playerAddress)?.ready
                     ? "MARK NOT READY"
                     : "MARK READY"}
@@ -540,6 +595,7 @@ export default function HotTakeProtocol() {
                 onClick={() => {
                   setScreen("landing");
                   setCurrentRoom(null);
+                  setRoomCode("");
                 }}
               >
                 LEAVE ROOM
@@ -565,200 +621,155 @@ export default function HotTakeProtocol() {
 
   const renderGame = () => {
     if (!currentRoom || !currentRoom.scenarios.length) return null;
+    const isHost = currentRoom.host === playerAddress;
+    const allSubmitted = currentRoom.status === "round_2"; // after host advances
 
     return (
       <div style={containerStyle}>
         <div style={{ maxWidth: 900, margin: "0 auto", padding: "4rem 2rem" }}>
-          {/* Header */}
           <div style={{ marginBottom: "2rem", textAlign: "center" }}>
             <h2 style={{ fontFamily: "Space Grotesk", fontSize: "1.5rem", marginBottom: "0.5rem" }}>
-              {currentRoom.status === "round_1" ? "ROUND 1: SUBMIT YOUR TAKES" : "ROUND 2: VOTE FOR BEST TAKES"}
+              {currentRoom.status === "round_1" ? "ROUND 1: SUBMIT YOUR TAKE" : "ROUND 2: VOTING PHASE"}
             </h2>
             <p style={{ color: "#64748B" }}>Room {currentRoom.room_code}</p>
           </div>
 
-          {/* Scenarios */}
           {currentRoom.status === "round_1" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.5rem" }}>
-              {currentRoom.scenarios.map((scenario) => (
-                <motion.div
-                  key={scenario.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: scenario.id * 0.1 }}
-                  style={{
-                    ...cardStyle,
-                    cursor: "pointer",
-                    border: selectedScenario === scenario.id ? `3px solid ${colors.primary}` : "none",
-                    transform: selectedScenario === scenario.id ? "scale(1.02)" : "scale(1)",
-                  }}
-                  onClick={() => setSelectedScenario(scenario.id)}
-                >
-                  <div
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.5rem" }}>
+                {currentRoom.scenarios.map((scenario) => (
+                  <motion.div
+                    key={scenario.id}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: scenario.id * 0.1 }}
                     style={{
-                      fontSize: "2rem",
-                      marginBottom: "1rem",
-                      textAlign: "center",
-                    }}
-                  >
-                    {scenario.type === "art" ? "🎨" : scenario.type === "business" ? "💼" : "🌐"}
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: "Space Grotesk",
-                      fontSize: "1.1rem",
-                      marginBottom: "0.75rem",
-                      textAlign: "center",
-                    }}
-                  >
-                    {scenario.title}
-                  </h3>
-                  <p style={{ fontSize: "0.9rem", color: "#64748B", marginBottom: "0.75rem", textAlign: "center" }}>
-                    {scenario.description}
-                  </p>
-                  <p
-                    style={{
-                      fontSize: "0.85rem",
-                      color: colors.text,
-                      padding: "0.75rem",
-                      background: "#F8FAFC",
-                      borderRadius: 8,
-                      textAlign: "center",
-                    }}
-                  >
-                    "{scenario.content}"
-                  </p>
-                </motion.div>
-              ))}
-            </div>
-          )}
-
-          {/* Submission form */}
-          {currentRoom.status === "round_1" && selectedScenario !== null && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              style={{ ...cardStyle, marginTop: "2rem" }}
-            >
-              <h3 style={{ marginBottom: "1rem", fontFamily: "Space Grotesk" }}>Your Hot Take</h3>
-
-              {/* Stance buttons */}
-              <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
-                {[
-                  { value: "genius", label: "🔥 Genius", color: colors.secondary },
-                  { value: "trash", label: "🗑️ Trash", color: colors.primary },
-                  { value: "spicy", label: "😈 Spicy", color: colors.accent2 },
-                ].map((s) => (
-                  <button
-                    key={s.value}
-                    style={{
-                      flex: 1,
-                      padding: "1rem",
-                      border: stance === s.value ? `3px solid ${s.color}` : "2px solid #E2E8F0",
-                      background: stance === s.value ? `${s.color}15` : "white",
-                      borderRadius: 12,
+                      ...cardStyle,
                       cursor: "pointer",
-                      fontFamily: "Space Grotesk",
-                      fontWeight: 600,
-                      fontSize: "1rem",
-                      transition: "all 0.2s",
+                      border: selectedScenario === scenario.id ? `3px solid ${colors.primary}` : "none",
+                      transform: selectedScenario === scenario.id ? "scale(1.02)" : "scale(1)",
                     }}
-                    onClick={() => setStance(s.value)}
+                    onClick={() => !submitted && setSelectedScenario(scenario.id)}
                   >
-                    {s.label}
-                  </button>
+                    <div style={{ fontSize: "2rem", marginBottom: "1rem", textAlign: "center" }}>
+                      {scenario.type === "art" ? "🎨" : scenario.type === "business" ? "💼" : "🌐"}
+                    </div>
+                    <h3 style={{ fontFamily: "Space Grotesk", fontSize: "1.1rem", marginBottom: "0.75rem", textAlign: "center" }}>
+                      {scenario.title}
+                    </h3>
+                    <p style={{ fontSize: "0.9rem", color: "#64748B", marginBottom: "0.75rem", textAlign: "center" }}>
+                      {scenario.description}
+                    </p>
+                    <p style={{ fontSize: "0.85rem", color: colors.text, padding: "0.75rem", background: "#F8FAFC", borderRadius: 8, textAlign: "center" }}>
+                      "{scenario.content}"
+                    </p>
+                  </motion.div>
                 ))}
               </div>
 
-              {/* Text input */}
-              <textarea
-                placeholder="Write your hot take (max 100 chars)..."
-                value={hotTake}
-                onChange={(e) => {
-                  if (e.target.value.length <= 100) {
-                    setHotTake(e.target.value);
-                  }
-                }}
-                style={{
-                  width: "100%",
-                  minHeight: 100,
-                  padding: "1rem",
-                  border: `2px solid ${colors.primary}`,
-                  borderRadius: 12,
-                  fontSize: "1rem",
-                  fontFamily: "Inter, sans-serif",
-                  resize: "vertical",
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
-              />
-              <div style={{ textAlign: "right", fontSize: "0.85rem", color: "#64748B", marginTop: "0.5rem" }}>
-                {hotTake.length}/100
-              </div>
+              {!submitted && selectedScenario !== null && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  style={{ ...cardStyle, marginTop: "2rem" }}
+                >
+                  <h3 style={{ marginBottom: "1rem", fontFamily: "Space Grotesk" }}>Your Hot Take</h3>
+                  <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
+                    {[
+                      { value: "genius", label: "🔥 Genius", color: colors.secondary },
+                      { value: "trash", label: "🗑️ Trash", color: colors.primary },
+                      { value: "spicy", label: "😈 Spicy", color: colors.accent2 },
+                    ].map((s) => (
+                      <button
+                        key={s.value}
+                        style={{
+                          flex: 1,
+                          padding: "1rem",
+                          border: stance === s.value ? `3px solid ${s.color}` : "2px solid #E2E8F0",
+                          background: stance === s.value ? `${s.color}15` : "white",
+                          borderRadius: 12,
+                          cursor: "pointer",
+                          fontFamily: "Space Grotesk",
+                          fontWeight: 600,
+                          fontSize: "1rem",
+                          transition: "all 0.2s",
+                        }}
+                        onClick={() => setStance(s.value)}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    placeholder="Write your hot take (max 100 chars)..."
+                    value={hotTake}
+                    onChange={(e) => {
+                      if (e.target.value.length <= 100) setHotTake(e.target.value);
+                    }}
+                    style={{
+                      width: "100%",
+                      minHeight: 100,
+                      padding: "1rem",
+                      border: `2px solid ${colors.primary}`,
+                      borderRadius: 12,
+                      fontSize: "1rem",
+                      fontFamily: "Inter, sans-serif",
+                      resize: "vertical",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ textAlign: "right", fontSize: "0.85rem", color: "#64748B", marginTop: "0.5rem" }}>
+                    {hotTake.length}/100
+                  </div>
+                  <button
+                    style={{
+                      ...buttonStyle,
+                      width: "100%",
+                      marginTop: "1rem",
+                      opacity: stance && hotTake.length > 10 ? 1 : 0.5,
+                      cursor: stance && hotTake.length > 10 ? "pointer" : "not-allowed",
+                    }}
+                    onClick={submitTake}
+                    disabled={!stance || hotTake.length < 10 || loading}
+                  >
+                    {loading ? "Submitting..." : "SUBMIT TAKE"}
+                  </button>
+                </motion.div>
+              )}
 
-              {/* Submit button */}
-              <button
-                style={{
-                  ...buttonStyle,
-                  width: "100%",
-                  marginTop: "1rem",
-                  opacity: stance && hotTake.length > 10 ? 1 : 0.5,
-                  cursor: stance && hotTake.length > 10 ? "pointer" : "not-allowed",
-                }}
-                onClick={submitTake}
-                disabled={!stance || hotTake.length < 10}
-              >
-                SUBMIT TAKE
-              </button>
-            </motion.div>
+              {submitted && (
+                <div style={{ ...cardStyle, marginTop: "2rem", textAlign: "center", padding: "2rem" }}>
+                  <p style={{ fontSize: "1.2rem", color: colors.secondary }}>✅ Take submitted!</p>
+                  <p style={{ marginTop: "0.5rem", color: "#64748B" }}>Waiting for other players...</p>
+                  {isHost && (
+                    <button style={{ ...buttonStyle, marginTop: "1rem" }} onClick={advanceToVoting} disabled={loading}>
+                      {loading ? "Advancing..." : "Advance to Voting (Host)"}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!selectedScenario && !submitted && (
+                <div style={{ ...cardStyle, marginTop: "2rem", textAlign: "center", padding: "3rem" }}>
+                  <p style={{ fontSize: "1.1rem", color: "#64748B" }}>👆 Select a scenario to submit your hot take</p>
+                </div>
+              )}
+            </>
           )}
 
-          {/* Waiting indicator */}
-          {currentRoom.status === "round_1" && !selectedScenario && (
-            <div style={{ ...cardStyle, marginTop: "2rem", textAlign: "center", padding: "3rem" }}>
-              <p style={{ fontSize: "1.1rem", color: "#64748B" }}>👆 Select a scenario to submit your hot take</p>
-            </div>
-          )}
-
-          {/* Mock waiting state */}
           {currentRoom.status === "round_2" && (
             <div style={{ ...cardStyle, textAlign: "center", padding: "3rem" }}>
-              <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>⏳</div>
-              <h3 style={{ fontFamily: "Space Grotesk", marginBottom: "0.5rem" }}>Waiting for all players...</h3>
-              <p style={{ color: "#64748B" }}>3 out of 5 players have submitted</p>
-
-              <div style={{ marginTop: "2rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                <div style={{ color: colors.secondary }}>✅ Player1 submitted</div>
-                <div style={{ color: colors.secondary }}>✅ Player3 submitted</div>
-                <div style={{ color: colors.secondary }}>✅ You submitted</div>
-                <div style={{ color: "#94A3B8" }}>⏳ Waiting for Player2...</div>
-                <div style={{ color: "#94A3B8" }}>⏳ Waiting for Player4...</div>
-              </div>
-
-              {/* Simulate moving to results */}
-              <button
-                style={{ ...buttonStyle, marginTop: "2rem" }}
-                onClick={() => {
-                  // Mock: Calculate results
-                  setCurrentRoom({
-                    ...currentRoom,
-                    status: "completed",
-                    current_round: 3,
-                    results: {
-                      final_scores: {
-                        [playerAddress]: { total: 42, player_name: playerName },
-                        other1: { total: 35, player_name: "Player2" },
-                        other2: { total: 28, player_name: "Player3" },
-                        other3: { total: 19, player_name: "Player4" },
-                        other4: { total: 12, player_name: "Player5" },
-                      },
-                    },
-                  });
-                  setScreen("results");
-                }}
-              >
-                SKIP TO RESULTS (Dev Only)
-              </button>
+              <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🗳️</div>
+              <h3 style={{ fontFamily: "Space Grotesk", marginBottom: "0.5rem" }}>Voting Phase</h3>
+              <p style={{ color: "#64748B", marginBottom: "1.5rem" }}>
+                (Voting UI would go here – see contract's submit_votes method)
+              </p>
+              {isHost && (
+                <button style={buttonStyle} onClick={calculateResults} disabled={loading}>
+                  {loading ? "Calculating..." : "Calculate Final Results"}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -768,7 +779,6 @@ export default function HotTakeProtocol() {
 
   const renderResults = () => {
     if (!currentRoom || !currentRoom.results) return null;
-
     const scores = currentRoom.results.final_scores;
     const sortedPlayers = Object.entries(scores).sort((a: any, b: any) => b[1].total - a[1].total);
 
@@ -781,7 +791,6 @@ export default function HotTakeProtocol() {
             <p style={{ color: "#64748B", marginBottom: "3rem" }}>Room {currentRoom.room_code}</p>
           </motion.div>
 
-          {/* Leaderboard */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -789,12 +798,10 @@ export default function HotTakeProtocol() {
             style={cardStyle}
           >
             <h2 style={{ marginBottom: "2rem", fontFamily: "Space Grotesk" }}>Final Standings</h2>
-
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
               {sortedPlayers.map(([address, data]: any, i) => {
                 const isWinner = i === 0;
                 const isPlayer = address === playerAddress;
-
                 return (
                   <div
                     key={address}
@@ -814,15 +821,7 @@ export default function HotTakeProtocol() {
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                      <div
-                        style={{
-                          fontSize: "1.5rem",
-                          fontWeight: 700,
-                          fontFamily: "Space Grotesk",
-                        }}
-                      >
-                        {i + 1}.
-                      </div>
+                      <div style={{ fontSize: "1.5rem", fontWeight: 700, fontFamily: "Space Grotesk" }}>{i + 1}.</div>
                       <div style={{ textAlign: "left" }}>
                         <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>
                           {data.player_name}
@@ -842,7 +841,6 @@ export default function HotTakeProtocol() {
               })}
             </div>
 
-            {/* Actions */}
             <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", justifyContent: "center" }}>
               <button style={buttonStyle} onClick={() => createRoom(false)}>
                 PLAY AGAIN
