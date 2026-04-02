@@ -71,11 +71,13 @@ async function readContract(functionName: string, args: any[]): Promise<any> {
 async function writeContractWithReturn(functionName: string, args: any[]): Promise<any> {
   if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   const client = getClient();
+  // 1. Simulate to get the return value (room code)
   const returnValue = await client.simulateWriteContract({
     address: CONTRACT_ADDRESS,
     functionName,
     args,
   });
+  // 2. Execute the real transaction
   await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName,
@@ -105,6 +107,7 @@ export default function HotTakeProtocol() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [playerAddress, setPlayerAddress] = useState<string>("");
   const [playerName, setPlayerName] = useState<string>("");
+  const [nameConfirmed, setNameConfirmed] = useState<boolean>(false);
   const [roomCode, setRoomCode] = useState<string>("");
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<number | null>(null);
@@ -115,11 +118,16 @@ export default function HotTakeProtocol() {
   const [envError, setEnvError] = useState<string>("");
   const pollInterval = useRef<NodeJS.Timeout | null>(null);
 
+  // Load player address from account
   useEffect(() => {
     if (!CONTRACT_ADDRESS) {
       setEnvError("Missing NEXT_PUBLIC_CONTRACT_ADDRESS environment variable.");
     } else {
-      setPlayerAddress(getAccount().address);
+      try {
+        setPlayerAddress(getAccount().address);
+      } catch (err) {
+        setEnvError("Failed to create account: " + (err as Error).message);
+      }
     }
   }, []);
 
@@ -149,28 +157,36 @@ export default function HotTakeProtocol() {
 
   const createRoom = async (isSolo: boolean = false) => {
     if (!CONTRACT_ADDRESS) { alert(envError); return; }
-    if (!playerName) return;
+    if (!nameConfirmed || !playerName.trim()) { alert("Please enter your name first."); return; }
     setLoading(true);
     try {
       const code = await writeContractWithReturn(isSolo ? "create_solo_room" : "create_room", [playerAddress, playerName]);
       setRoomCode(code);
       await fetchRoom(code);
       setScreen("lobby");
-    } catch (err) { console.error(err); alert("Failed to create room."); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error("Create room error:", err);
+      alert(`Failed to create room: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const joinRoom = async (code: string) => {
     if (!CONTRACT_ADDRESS) { alert(envError); return; }
-    if (!playerName) return;
+    if (!nameConfirmed || !playerName.trim()) { alert("Please enter your name first."); return; }
     setLoading(true);
     try {
       await writeContract("join_room", [code, playerAddress, playerName]);
       setRoomCode(code);
       await fetchRoom(code);
       setScreen("lobby");
-    } catch (err) { console.error(err); alert("Failed to join room."); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error("Join room error:", err);
+      alert(`Failed to join room: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleReady = async () => {
@@ -179,8 +195,12 @@ export default function HotTakeProtocol() {
     try {
       await writeContract("toggle_ready", [roomCode, playerAddress]);
       await fetchRoom(roomCode);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to toggle ready: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startGame = async () => {
@@ -188,8 +208,12 @@ export default function HotTakeProtocol() {
     setLoading(true);
     try {
       await writeContract("start_game", [roomCode, playerAddress]);
-    } catch (err) { console.error(err); alert("Failed to start game."); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to start game: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const submitTake = async () => {
@@ -198,8 +222,12 @@ export default function HotTakeProtocol() {
     try {
       await writeContract("submit_take", [roomCode, playerAddress, selectedScenario, stance, hotTake]);
       setSubmitted(true);
-    } catch (err) { console.error(err); alert("Failed to submit take."); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to submit take: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const advanceToVoting = async () => {
@@ -208,8 +236,12 @@ export default function HotTakeProtocol() {
     try {
       await writeContract("advance_to_voting", [roomCode]);
       await fetchRoom(roomCode);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to advance: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const calculateResults = async () => {
@@ -218,11 +250,15 @@ export default function HotTakeProtocol() {
     try {
       await writeContract("calculate_results", [roomCode]);
       await fetchRoom(roomCode);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to calculate results: ${err?.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Colors & styles
+  // Styles
   const colors = {
     bg: "#F5F7FA",
     card: "#FFFFFF",
@@ -267,7 +303,7 @@ export default function HotTakeProtocol() {
     border: `2px solid ${colors.primary}`,
   };
 
-  // ----- RENDER LANDING -----
+  // ----- RENDER LANDING (fixed name input) -----
   const renderLanding = () => (
     <div style={containerStyle}>
       <div style={{ maxWidth: 600, margin: "0 auto", padding: "4rem 2rem", textAlign: "center" }}>
@@ -277,14 +313,29 @@ export default function HotTakeProtocol() {
           <p style={{ fontSize: "1.1rem", color: "#64748B", marginBottom: "3rem" }}>5-player debate game • AI judges • 10 minutes</p>
         </motion.div>
 
-        {!playerName && (
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ ...cardStyle, marginBottom: "2rem" }}>
-            <p style={{ marginBottom: "1rem", fontWeight: 600 }}>Enter your name to start</p>
-            <input type="text" placeholder="Your name..." value={playerName} onChange={(e) => setPlayerName(e.target.value)} style={{ width: "100%", padding: "1rem", border: `2px solid ${colors.primary}`, borderRadius: 12, fontSize: "1rem", fontFamily: "Inter, sans-serif", outline: "none", boxSizing: "border-box" }} />
-          </motion.div>
-        )}
+        {/* Name input - always visible, with confirm button */}
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ ...cardStyle, marginBottom: "2rem" }}>
+          <p style={{ marginBottom: "1rem", fontWeight: 600 }}>Enter your name to start</p>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              type="text"
+              placeholder="Your name..."
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              onKeyPress={(e) => { if (e.key === "Enter" && playerName.trim()) setNameConfirmed(true); }}
+              style={{ flex: 1, padding: "1rem", border: `2px solid ${colors.primary}`, borderRadius: 12, fontSize: "1rem", fontFamily: "Inter, sans-serif", outline: "none" }}
+            />
+            <button
+              style={{ ...buttonStyle, padding: "0 1.5rem" }}
+              onClick={() => { if (playerName.trim()) setNameConfirmed(true); }}
+            >
+              Set
+            </button>
+          </div>
+        </motion.div>
 
-        {playerName && (
+        {/* Buttons only appear after name is confirmed */}
+        {nameConfirmed && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             <button style={buttonStyle} onClick={() => createRoom(false)} disabled={loading}>{loading ? "Creating..." : "CREATE ROOM"}</button>
             <button style={secondaryButtonStyle} onClick={() => { const code = prompt("Enter room code:"); if (code) joinRoom(code); }}>JOIN ROOM</button>
@@ -307,7 +358,7 @@ export default function HotTakeProtocol() {
     </div>
   );
 
-  // ----- RENDER LOBBY -----
+  // ----- RENDER LOBBY (unchanged) -----
   const renderLobby = () => {
     if (!currentRoom) return null;
     const isHost = currentRoom.host === playerAddress;
@@ -350,7 +401,7 @@ export default function HotTakeProtocol() {
               ) : (
                 <button style={buttonStyle} onClick={toggleReady} disabled={loading}>{currentRoom.players.find(p => p.address === playerAddress)?.ready ? "MARK NOT READY" : "MARK READY"}</button>
               )}
-              <button style={secondaryButtonStyle} onClick={() => { setScreen("landing"); setCurrentRoom(null); setRoomCode(""); }}>LEAVE ROOM</button>
+              <button style={secondaryButtonStyle} onClick={() => { setScreen("landing"); setCurrentRoom(null); setRoomCode(""); setNameConfirmed(false); setPlayerName(""); }}>LEAVE ROOM</button>
             </div>
             {!isHost && <p style={{ marginTop: "1rem", textAlign: "center", color: "#64748B" }}>Waiting for host to start...</p>}
             {isHost && !canStart && <p style={{ marginTop: "1rem", textAlign: "center", color: colors.accent1 }}>Need at least 3 players to start</p>}
@@ -360,7 +411,7 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ----- RENDER GAME -----
+  // ----- RENDER GAME (unchanged) -----
   const renderGame = () => {
     if (!currentRoom || !currentRoom.scenarios.length) return null;
     const isHost = currentRoom.host === playerAddress;
@@ -429,7 +480,7 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ----- RENDER RESULTS -----
+  // ----- RENDER RESULTS (unchanged) -----
   const renderResults = () => {
     if (!currentRoom || !currentRoom.results) return null;
     const scores = currentRoom.results.final_scores;
