@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
@@ -32,22 +32,14 @@ interface Room {
   status: GamePhase;
   scenarios: Scenario[];
   submissions: Record<string, any>;
-  votes: Record<string, any>;
+  votes: Record<string, string>;
   results: any;
   current_round: number;
   solo_mode?: boolean;
 }
 
-interface RecentGame {
-  game_id: number;
-  room_code: string;
-  players: Player[];
-  results: any;
-  timestamp: string;
-}
-
 // ============================================
-// CONTRACT HELPERS — modelled after POH working page
+// CONTRACT HELPERS
 // ============================================
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}` | undefined;
 const MAX_ATTEMPTS = 3;
@@ -79,7 +71,6 @@ async function readContract(functionName: string, args: any[]): Promise<any> {
   });
 }
 
-// Write + wait for receipt with retries (same pattern as working POH page)
 async function writeContract(functionName: string, args: any[]): Promise<boolean> {
   if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -111,21 +102,17 @@ async function writeContract(functionName: string, args: any[]): Promise<boolean
   return false;
 }
 
-// For create_room we need the return value (room code).
-// Strategy: simulate first to grab return value, then write + wait.
 async function writeContractWithReturn(functionName: string, args: any[]): Promise<string> {
   if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const { client } = makeClient();
       console.log(`writeContractWithReturn attempt ${attempt}/${MAX_ATTEMPTS}: ${functionName}`);
-      // Simulate to get return value
       const returnValue = await client.simulateWriteContract({
         address: CONTRACT_ADDRESS,
         functionName,
         args,
       });
-      // Execute real tx
       const hash = await client.writeContract({
         address: CONTRACT_ADDRESS,
         functionName,
@@ -152,841 +139,586 @@ async function writeContractWithReturn(functionName: string, args: any[]): Promi
 }
 
 // ============================================
-// STYLES
+// NEON PLAYGROUND COLORS
 // ============================================
 const C = {
-  bg: "#0A0A0F",
-  surface: "#13131A",
-  card: "#1C1C28",
-  border: "#2A2A3E",
-  text: "#F0EEF8",
-  muted: "#8B8BA0",
-  primary: "#FF3D3D",
-  fire: "#FF6B35",
-  gold: "#FFD60A",
-  green: "#00E5A0",
-  purple: "#9B5DE5",
+  bg: "#F5F7FA",
+  surface: "#FFFFFF",
+  card: "#FFFFFF",
+  border: "#E2E8F0",
+  text: "#1A202C",
+  muted: "#718096",
+  primary: "#FF3D00",
+  secondary: "#00E676",
+  fire: "#FF6D00",
+  gold: "#FFD600",
+  purple: "#D500F9",
+  shadow: "0 2px 8px rgba(0,0,0,0.08)",
+  shadowHover: "0 4px 16px rgba(0,0,0,0.12)",
 };
 
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700;900&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif; }
+  body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif; line-height: 1.6; }
   ::placeholder { color: ${C.muted}; }
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: ${C.surface}; }
-  ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
-  input, textarea { background: ${C.surface}; color: ${C.text}; border: 1.5px solid ${C.border}; border-radius: 10px; padding: 0.85rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 1rem; outline: none; transition: border 0.2s; width: 100%; }
-  input:focus, textarea:focus { border-color: ${C.primary}; }
-  textarea { resize: vertical; }
-
-  .pulse { animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-  .spin { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .fadeIn { animation: fadeIn 0.4s ease; }
-  @keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-  .fireGlow { text-shadow: 0 0 20px ${C.primary}80, 0 0 40px ${C.fire}40; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: ${C.bg}; }
+  ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: ${C.muted}; }
   
-  .btn-primary {
-    background: linear-gradient(135deg, ${C.primary}, ${C.fire});
+  input, textarea { 
+    background: ${C.surface}; 
+    color: ${C.text}; 
+    border: 2px solid ${C.border}; 
+    border-radius: 12px; 
+    padding: 0.9rem 1.1rem; 
+    font-family: 'DM Sans', sans-serif; 
+    font-size: 1rem; 
+    outline: none; 
+    transition: all 0.2s; 
+    width: 100%; 
+  }
+  input:focus, textarea:focus { border-color: ${C.primary}; box-shadow: 0 0 0 3px ${C.primary}20; }
+  textarea { resize: vertical; min-height: 100px; }
+
+  .card { 
+    background: ${C.card}; 
+    border: 1.5px solid ${C.border}; 
+    border-radius: 16px; 
+    padding: 1.75rem; 
+    box-shadow: ${C.shadow}; 
+    transition: all 0.3s ease;
+  }
+  .card:hover { box-shadow: ${C.shadowHover}; }
+
+  .btn-primary { 
+    background: linear-gradient(135deg, ${C.primary}, ${C.fire}); 
+    color: white; 
+    border: none; 
+    border-radius: 12px; 
+    padding: 0.95rem 1.75rem; 
+    font-weight: 700; 
+    font-size: 1rem; 
+    cursor: pointer; 
+    transition: all 0.2s; 
+    box-shadow: ${C.shadow};
+    font-family: 'DM Sans', sans-serif;
+  }
+  .btn-primary:hover:not(:disabled) { 
+    transform: translateY(-2px); 
+    box-shadow: ${C.shadowHover}; 
+  }
+  .btn-primary:active:not(:disabled) { transform: translateY(0); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-outline { 
+    background: transparent; 
+    color: ${C.text}; 
+    border: 2px solid ${C.border}; 
+    border-radius: 12px; 
+    padding: 0.9rem 1.5rem; 
+    font-weight: 600; 
+    font-size: 1rem; 
+    cursor: pointer; 
+    transition: all 0.2s;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .btn-outline:hover:not(:disabled) { 
+    border-color: ${C.primary}; 
+    color: ${C.primary}; 
+    background: ${C.primary}08; 
+  }
+  .btn-outline:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-secondary {
+    background: ${C.secondary};
     color: white;
     border: none;
-    border-radius: 10px;
-    padding: 0.9rem 1.8rem;
-    font-family: 'DM Sans', sans-serif;
+    border-radius: 12px;
+    padding: 0.95rem 1.75rem;
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: 1rem;
     cursor: pointer;
-    letter-spacing: 0.04em;
-    transition: transform 0.15s, opacity 0.15s;
-  }
-  .btn-primary:hover:not(:disabled) { transform: translateY(-2px); opacity: 0.9; }
-  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
-
-  .btn-outline {
-    background: transparent;
-    color: ${C.text};
-    border: 1.5px solid ${C.border};
-    border-radius: 10px;
-    padding: 0.9rem 1.8rem;
+    transition: all 0.2s;
+    box-shadow: ${C.shadow};
     font-family: 'DM Sans', sans-serif;
-    font-weight: 600;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: border-color 0.2s, transform 0.15s;
   }
-  .btn-outline:hover:not(:disabled) { border-color: ${C.primary}; transform: translateY(-2px); }
-  .btn-outline:disabled { opacity: 0.45; cursor: not-allowed; }
-
-  .btn-gold {
-    background: linear-gradient(135deg, ${C.gold}, #FFA500);
-    color: #0A0A0F;
-    border: none;
-    border-radius: 10px;
-    padding: 0.9rem 1.8rem;
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 700;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: transform 0.15s, opacity 0.15s;
-  }
-  .btn-gold:hover:not(:disabled) { transform: translateY(-2px); }
-  .btn-gold:disabled { opacity: 0.45; cursor: not-allowed; }
-
-  .card {
-    background: ${C.card};
-    border: 1px solid ${C.border};
-    border-radius: 16px;
-    padding: 1.75rem;
+  .btn-secondary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: ${C.shadowHover};
   }
 
-  .tag {
-    display: inline-block;
-    padding: 0.3rem 0.75rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .tag-fire { background: ${C.primary}22; color: ${C.primary}; border: 1px solid ${C.primary}44; }
-  .tag-green { background: ${C.green}22; color: ${C.green}; border: 1px solid ${C.green}44; }
-  .tag-gold { background: ${C.gold}22; color: ${C.gold}; border: 1px solid ${C.gold}44; }
-  .tag-purple { background: ${C.purple}22; color: ${C.purple}; border: 1px solid ${C.purple}44; }
+  .stance-genius { background: linear-gradient(135deg, ${C.gold}, ${C.fire}); color: #1A202C; }
+  .stance-trash { background: #CBD5E0; color: #1A202C; }
+  .stance-spicy { background: linear-gradient(135deg, ${C.purple}, ${C.primary}); color: white; }
+
+  .fadeIn { animation: fadeIn 0.4s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .slide-up { animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 `;
 
-// ============================================
-// MAIN COMPONENT
-// ============================================
 export default function HotTakeProtocol() {
   const [screen, setScreen] = useState<Screen>("landing");
-  const [playerAddress, setPlayerAddress] = useState<string>("");
-  const [playerName, setPlayerName] = useState<string>("");
-  const [nameConfirmed, setNameConfirmed] = useState<boolean>(false);
-  const [roomCode, setRoomCode] = useState<string>("");
-  const [joinCodeInput, setJoinCodeInput] = useState<string>("");
-  const [showJoinInput, setShowJoinInput] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
+  const [envError, setEnvError] = useState("");
+  
+  const [playerName, setPlayerName] = useState("");
+  const [playerAddress, setPlayerAddress] = useState("");
+  const [roomCode, setRoomCode] = useState("");
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
-  const [selectedScenario, setSelectedScenario] = useState<number | null>(null);
-  const [stance, setStance] = useState<string>("");
-  const [hotTake, setHotTake] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [loadingMsg, setLoadingMsg] = useState<string>("");
-  const [submitted, setSubmitted] = useState<boolean>(false);
-  const [envError, setEnvError] = useState<string>("");
-  const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
-  const [myVotes, setMyVotes] = useState<Record<number, string>>({});
-  const [votesSubmitted, setVotesSubmitted] = useState<boolean>(false);
-  const [error, setError] = useState<string>("");
-  const pollInterval = useRef<NodeJS.Timeout | null>(null);
+  
+  const [selectedScenario, setSelectedScenario] = useState<number | null>(null);
+  const [selectedStance, setSelectedStance] = useState<string>("");
+  const [takeText, setTakeText] = useState("");
+  const [votes, setVotes] = useState<Record<string, string>>({});
+  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
 
-  // Init account
   useEffect(() => {
     if (!CONTRACT_ADDRESS) {
-      setEnvError("Missing NEXT_PUBLIC_CONTRACT_ADDRESS environment variable.");
-    } else {
-      try {
-        const acc = getOrCreateAccount();
-        setPlayerAddress(acc.address);
-      } catch (err) {
-        setEnvError("Failed to create account: " + (err as Error).message);
-      }
+      setEnvError("Missing contract address. Set NEXT_PUBLIC_CONTRACT_ADDRESS in .env.local");
     }
+    const stored = localStorage.getItem("htp_player_name");
+    if (stored) setPlayerName(stored);
+    const account = getOrCreateAccount();
+    setPlayerAddress(account.address);
+    loadLeaderboard();
   }, []);
-
-  // Load recent games on landing
-  useEffect(() => {
-    if (screen === "landing" && CONTRACT_ADDRESS) {
-      loadRecentGames();
-    }
-    if (screen === "leaderboard" && CONTRACT_ADDRESS) {
-      loadLeaderboard();
-    }
-  }, [screen]);
-
-  const loadRecentGames = async () => {
-    try {
-      const raw = await readContract("get_recent_games", [5]);
-      if (raw) {
-        const games = JSON.parse(raw as string);
-        setRecentGames(games.reverse());
-      }
-    } catch (e) {
-      console.error("Failed to load recent games", e);
-    }
-  };
 
   const loadLeaderboard = async () => {
     try {
       const raw = await readContract("get_global_leaderboard", []);
-      if (raw) setLeaderboard(JSON.parse(raw as string));
-    } catch (e) {
-      console.error("Failed to load leaderboard", e);
-    }
-  };
-
-  const fetchRoom = useCallback(async (code: string) => {
-    if (!CONTRACT_ADDRESS) return;
-    try {
-      const roomJson = await readContract("get_room", [code]);
-      if (roomJson) {
-        const room: Room = JSON.parse(roomJson as string);
-        setCurrentRoom(room);
-        if (room.status === "round_1" && screen === "lobby") setScreen("game");
-        else if (room.status === "completed" && screen !== "results") setScreen("results");
+      if (raw) {
+        const data = JSON.parse(raw as string);
+        setLeaderboard(data);
       }
     } catch (err) {
-      console.error("Failed to fetch room", err);
-    }
-  }, [screen]);
-
-  useEffect(() => {
-    if (roomCode && (screen === "lobby" || screen === "game") && CONTRACT_ADDRESS) {
-      fetchRoom(roomCode);
-      pollInterval.current = setInterval(() => fetchRoom(roomCode), 5000);
-      return () => { if (pollInterval.current) clearInterval(pollInterval.current); };
-    }
-  }, [roomCode, screen, fetchRoom]);
-
-  const doLoading = (msg: string, active: boolean) => {
-    setLoading(active);
-    setLoadingMsg(active ? msg : "");
-    if (active) setError("");
-  };
-
-  const createRoom = async () => {
-    if (!CONTRACT_ADDRESS) { setError(envError); return; }
-    if (!nameConfirmed || !playerName.trim()) { setError("Please enter your name first."); return; }
-    doLoading("Creating room on GenLayer...", true);
-    try {
-      // create_room returns the room code
-      const code = await writeContractWithReturn("create_room", [playerAddress, playerName]);
-      setRoomCode(code);
-      await fetchRoom(code);
-      setScreen("lobby");
-    } catch (err: any) {
-      console.error("Create room error:", err);
-      setError(`Failed to create room: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const joinRoom = async (code: string) => {
-    if (!CONTRACT_ADDRESS) { setError(envError); return; }
-    if (!nameConfirmed || !playerName.trim()) { setError("Please enter your name first."); return; }
-    const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return;
-    doLoading("Joining room...", true);
-    try {
-      await writeContract("join_room", [trimmed, playerAddress, playerName]);
-      setRoomCode(trimmed);
-      await fetchRoom(trimmed);
-      setScreen("lobby");
-    } catch (err: any) {
-      console.error("Join room error:", err);
-      setError(`Failed to join room: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const toggleReady = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode) return;
-    doLoading("Toggling ready...", true);
-    try {
-      await writeContract("toggle_ready", [roomCode, playerAddress]);
-      await fetchRoom(roomCode);
-    } catch (err: any) {
-      setError(`Failed to toggle ready: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const startGame = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode) return;
-    doLoading("Starting game on GenLayer...", true);
-    try {
-      await writeContract("start_game", [roomCode, playerAddress]);
-      await fetchRoom(roomCode);
-    } catch (err: any) {
-      setError(`Failed to start game: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const submitTake = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode || selectedScenario === null || !stance || !hotTake.trim()) return;
-    doLoading("Submitting your hot take...", true);
-    try {
-      await writeContract("submit_take", [roomCode, playerAddress, selectedScenario, stance, hotTake]);
-      setSubmitted(true);
-    } catch (err: any) {
-      setError(`Failed to submit take: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const advanceToVoting = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode) return;
-    doLoading("Advancing to voting phase...", true);
-    try {
-      await writeContract("advance_to_voting", [roomCode]);
-      await fetchRoom(roomCode);
-    } catch (err: any) {
-      setError(`Failed to advance: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const submitVotes = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode) return;
-    doLoading("Submitting votes...", true);
-    try {
-      const votesArray = Object.values(myVotes);
-      await writeContract("submit_votes", [roomCode, playerAddress, JSON.stringify(votesArray)]);
-      setVotesSubmitted(true);
-    } catch (err: any) {
-      setError(`Failed to submit votes: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
-    }
-  };
-
-  const calculateResults = async () => {
-    if (!CONTRACT_ADDRESS || !roomCode) return;
-    doLoading("AI is judging your takes... (this may take 30-60 seconds)", true);
-    try {
-      await writeContract("calculate_results", [roomCode]);
-      await fetchRoom(roomCode);
-    } catch (err: any) {
-      setError(`Failed to calculate results: ${err?.message || "Unknown error"}`);
-    } finally {
-      doLoading("", false);
+      console.error("Failed to load leaderboard:", err);
     }
   };
 
   const goHome = () => {
-    if (pollInterval.current) clearInterval(pollInterval.current);
+    if (pollInterval) clearInterval(pollInterval);
+    setPollInterval(null);
     setScreen("landing");
     setCurrentRoom(null);
     setRoomCode("");
-    setSubmitted(false);
-    setVotesSubmitted(false);
     setSelectedScenario(null);
-    setStance("");
-    setHotTake("");
-    setMyVotes({});
-    setError("");
-    setShowJoinInput(false);
-    setJoinCodeInput("");
+    setSelectedStance("");
+    setTakeText("");
+    setVotes({});
   };
 
-  // ============================================
-  // RENDERS
-  // ============================================
+  const startPolling = useCallback((code: string) => {
+    if (pollInterval) clearInterval(pollInterval);
+    const interval = setInterval(async () => {
+      try {
+        const raw = await readContract("get_room", [code]);
+        if (raw) {
+          const room = JSON.parse(raw as string);
+          setCurrentRoom(room);
+          if (room.status === "completed") {
+            clearInterval(interval);
+            setPollInterval(null);
+            setScreen("results");
+          } else if (room.status === "round_2" && screen === "game") {
+            setScreen("game");
+          }
+        }
+      } catch (err) {
+        console.error("Poll error:", err);
+      }
+    }, 3000);
+    setPollInterval(interval);
+  }, [screen, pollInterval]);
 
-  const renderError = () => error ? (
-    <div style={{ background: `${C.primary}18`, border: `1px solid ${C.primary}50`, borderRadius: 10, padding: "0.85rem 1.1rem", color: C.primary, fontSize: "0.9rem", marginTop: "1rem" }}>
-      ⚠️ {error}
-    </div>
-  ) : null;
+  useEffect(() => {
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [pollInterval]);
 
-  const renderLoadingOverlay = () => loading ? (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(10,10,15,0.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(4px)" }}>
-      <div style={{ fontSize: "2.5rem", marginBottom: "1.5rem" }} className="spin">🔥</div>
-      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.8rem", letterSpacing: "0.1em", color: C.primary }}>GenLayer</div>
-      <div style={{ color: C.muted, marginTop: "0.75rem", fontSize: "0.95rem" }}>{loadingMsg || "Processing..."}</div>
-      <div style={{ marginTop: "2rem", color: C.muted, fontSize: "0.8rem" }}>Waiting for consensus...</div>
-    </div>
-  ) : null;
-
-  const scenarioEmoji = (type: string) => {
-    const map: Record<string, string> = { art: "🎨", business: "💼", culture: "🌐", tech: "⚙️", society: "🏛️" };
-    return map[type] || "🔥";
+  const createRoom = async () => {
+    if (!playerName.trim()) {
+      alert("Please enter your name first!");
+      return;
+    }
+    setLoading(true);
+    setLoadingMessage("Creating room...");
+    try {
+      localStorage.setItem("htp_player_name", playerName);
+      const code = await writeContractWithReturn("create_room", [playerAddress, playerName]);
+      setRoomCode(code);
+      const raw = await readContract("get_room", [code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        setScreen("lobby");
+        startPolling(code);
+      }
+    } catch (err: any) {
+      alert(`Failed to create room: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
   };
 
-  // LANDING
-  const renderLanding = () => (
-    <div style={{ minHeight: "100vh", background: C.bg }}>
-      {/* Header */}
-      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "1rem 2rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", letterSpacing: "0.08em", color: C.text }}>
-          🔥 HOT TAKE PROTOCOL
-        </div>
-        <div style={{ display: "flex", gap: "0.75rem" }}>
-          <button className="btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }} onClick={() => setScreen("leaderboard")}>🏆 Leaderboard</button>
-          <button className="btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }} onClick={() => setScreen("stats")}>📊 My Stats</button>
+  const createSoloRoom = async () => {
+    if (!playerName.trim()) {
+      alert("Please enter your name first!");
+      return;
+    }
+    setLoading(true);
+    setLoadingMessage("Creating Solo Arena...");
+    try {
+      localStorage.setItem("htp_player_name", playerName);
+      const code = await writeContractWithReturn("create_solo_room", [playerAddress, playerName]);
+      setRoomCode(code);
+      const raw = await readContract("get_room", [code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        setScreen("lobby");
+        startPolling(code);
+      }
+    } catch (err: any) {
+      alert(`Failed to create solo room: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
+
+  const joinRoom = async () => {
+    if (!playerName.trim() || !roomCode.trim()) {
+      alert("Please enter your name and room code!");
+      return;
+    }
+    setLoading(true);
+    setLoadingMessage("Joining room...");
+    try {
+      localStorage.setItem("htp_player_name", playerName);
+      await writeContract("join_room", [roomCode, playerAddress, playerName]);
+      const raw = await readContract("get_room", [roomCode]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        setScreen("lobby");
+        startPolling(roomCode);
+      }
+    } catch (err: any) {
+      alert(`Failed to join room: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
+
+  const toggleReady = async () => {
+    if (!currentRoom) return;
+    setLoading(true);
+    try {
+      await writeContract("toggle_ready", [currentRoom.room_code, playerAddress]);
+      const raw = await readContract("get_room", [currentRoom.room_code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+      }
+    } catch (err: any) {
+      alert(`Failed to toggle ready: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startGame = async () => {
+    if (!currentRoom) return;
+    setLoading(true);
+    setLoadingMessage("Starting game and generating scenarios...");
+    try {
+      await writeContract("start_game", [currentRoom.room_code, playerAddress]);
+      const raw = await readContract("get_room", [currentRoom.room_code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        setScreen("game");
+      }
+    } catch (err: any) {
+      alert(`Failed to start game: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
+
+  const submitTake = async () => {
+    if (!currentRoom || selectedScenario === null || !selectedStance || !takeText.trim()) {
+      alert("Please select a scenario, stance, and write your take!");
+      return;
+    }
+    setLoading(true);
+    setLoadingMessage("Submitting your hot take...");
+    try {
+      await writeContract("submit_take", [currentRoom.room_code, playerAddress, selectedScenario, selectedStance, takeText]);
+      const raw = await readContract("get_room", [currentRoom.room_code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        
+        const allSubmitted = room.players.every((p: Player) => 
+          Object.keys(room.submissions).some(key => key.startsWith(p.address))
+        );
+        if (allSubmitted) {
+          await writeContract("advance_to_voting", [currentRoom.room_code]);
+          const updatedRaw = await readContract("get_room", [currentRoom.room_code]);
+          if (updatedRaw) {
+            const updatedRoom = JSON.parse(updatedRaw as string);
+            setCurrentRoom(updatedRoom);
+          }
+        }
+      }
+    } catch (err: any) {
+      alert(`Failed to submit take: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
+
+  const submitVotes = async () => {
+    if (!currentRoom) return;
+    setLoading(true);
+    setLoadingMessage("Submitting votes...");
+    try {
+      const votesArray = Object.values(votes);
+      await writeContract("submit_votes", [currentRoom.room_code, playerAddress, JSON.stringify(votesArray)]);
+      const raw = await readContract("get_room", [currentRoom.room_code]);
+      if (raw) {
+        const room = JSON.parse(raw as string);
+        setCurrentRoom(room);
+        
+        const allVoted = room.players.every((p: Player) => 
+          p.address.startsWith("bot_") || room.votes[p.address]
+        );
+        if (allVoted) {
+          setLoadingMessage("Calculating results with AI judges...");
+          await writeContract("calculate_results", [currentRoom.room_code]);
+          const resultsRaw = await readContract("get_room", [currentRoom.room_code]);
+          if (resultsRaw) {
+            const resultsRoom = JSON.parse(resultsRaw as string);
+            setCurrentRoom(resultsRoom);
+            setScreen("results");
+          }
+        }
+      }
+    } catch (err: any) {
+      alert(`Failed to submit votes: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
+
+  const copyRoomCode = () => {
+    if (currentRoom) {
+      navigator.clipboard.writeText(currentRoom.room_code);
+      alert("Room code copied!");
+    }
+  };
+
+  const renderLoadingOverlay = () => {
+    if (!loading) return null;
+    return (
+      <div style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+        backdropFilter: "blur(4px)",
+      }}>
+        <div className="card" style={{ textAlign: "center", minWidth: 300 }}>
+          <div className="spin" style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔥</div>
+          <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.5rem" }}>{loadingMessage || "Loading..."}</div>
+          <div style={{ color: C.muted, fontSize: "0.9rem" }}>Please wait...</div>
         </div>
       </div>
+    );
+  };
 
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "3rem 1.5rem" }} className="fadeIn">
-        {/* Hero */}
+  const renderLanding = () => (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", padding: "2rem 1.5rem" }} className="fadeIn">
+      <div style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: "3rem" }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "clamp(3rem,10vw,5.5rem)", lineHeight: 0.95, letterSpacing: "0.02em", marginBottom: "1rem" }}>
-            <span style={{ color: C.primary }} className="fireGlow">HOT</span>
-            <span style={{ color: C.text }}> TAKE</span>
-            <br />
-            <span style={{ color: C.text }}>PROTOCOL</span>
-          </div>
-          <p style={{ color: C.muted, fontSize: "1rem", marginTop: "1rem" }}>
-            2–5 players · AI judges your takes · Debate on-chain
+          <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>🔥</div>
+          <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3.5rem", letterSpacing: "0.06em", lineHeight: 1.1, marginBottom: "1rem" }}>
+            HOT TAKE<br />PROTOCOL
+          </h1>
+          <p style={{ color: C.muted, fontSize: "1.1rem", marginBottom: "0.75rem" }}>
+            Debate. Argue. Win with AI.
           </p>
-          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "center", marginTop: "1rem", flexWrap: "wrap" }}>
-            <span className="tag tag-fire">GenLayer AI</span>
-            <span className="tag tag-green">No Wallet Needed</span>
-            <span className="tag tag-gold">~10 Minutes</span>
-          </div>
+          <p style={{ color: C.muted, fontSize: "0.9rem" }}>
+            5-player debate game powered by GenLayer
+          </p>
         </div>
 
-        {/* Name input */}
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <div style={{ marginBottom: "0.75rem", fontWeight: 600, fontSize: "0.9rem", color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Your Player Name</div>
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <input
-              type="text"
-              placeholder="Enter a name..."
-              value={playerName}
-              onChange={e => { setPlayerName(e.target.value); if (nameConfirmed) setNameConfirmed(false); }}
-              onKeyDown={e => { if (e.key === "Enter" && playerName.trim()) setNameConfirmed(true); }}
-              maxLength={24}
-            />
-            <button
-              className="btn-primary"
-              style={{ whiteSpace: "nowrap", padding: "0.85rem 1.4rem" }}
-              onClick={() => { if (playerName.trim()) setNameConfirmed(true); }}
-            >
-              {nameConfirmed ? "✓ Set" : "Set Name"}
-            </button>
+          <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "0.9rem" }}>YOUR NAME</div>
+          <input
+            type="text"
+            placeholder="Enter your name..."
+            value={playerName}
+            onChange={(e) => setPlayerName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && createRoom()}
+            style={{ marginBottom: "1rem" }}
+          />
+          <div style={{ fontSize: "0.85rem", color: C.muted }}>
+            Your address: <code style={{ color: C.text, fontSize: "0.8rem" }}>{playerAddress.slice(0, 12)}...</code>
           </div>
-          {nameConfirmed && (
-            <div style={{ marginTop: "0.75rem", color: C.green, fontSize: "0.85rem" }}>
-              ✅ Playing as <strong>{playerName}</strong>
-            </div>
-          )}
         </div>
 
-        {/* Action buttons */}
-        {nameConfirmed && (
-          <div className="fadeIn" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "2.5rem" }}>
-            <button className="btn-primary" style={{ width: "100%", fontSize: "1.05rem", padding: "1.1rem" }} onClick={createRoom} disabled={loading}>
-              🔥 Create Room
-            </button>
-
-            {!showJoinInput ? (
-              <button className="btn-outline" style={{ width: "100%" }} onClick={() => setShowJoinInput(true)}>
-                🚪 Join Room with Code
-              </button>
-            ) : (
-              <div className="fadeIn" style={{ display: "flex", gap: "0.75rem" }}>
-                <input
-                  type="text"
-                  placeholder="Enter room code..."
-                  value={joinCodeInput}
-                  onChange={e => setJoinCodeInput(e.target.value.toUpperCase())}
-                  onKeyDown={e => { if (e.key === "Enter") joinRoom(joinCodeInput); }}
-                  maxLength={8}
-                  style={{ fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em" }}
-                />
-                <button className="btn-primary" style={{ whiteSpace: "nowrap" }} onClick={() => joinRoom(joinCodeInput)} disabled={!joinCodeInput.trim()}>
-                  Join →
-                </button>
-                <button className="btn-outline" style={{ padding: "0.85rem" }} onClick={() => { setShowJoinInput(false); setJoinCodeInput(""); }}>✕</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {renderError()}
-
-        {/* Recent Games — loaded from contract */}
-        <div style={{ marginTop: "2.5rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.06em", color: C.muted }}>Recent Games</div>
-            <button onClick={loadRecentGames} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: "0.8rem" }}>↻ Refresh</button>
-          </div>
-          {recentGames.length === 0 ? (
-            <div className="card" style={{ textAlign: "center", color: C.muted, padding: "2rem" }}>
-              <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🎮</div>
-              No recent games yet. Be the first to play!
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-              {recentGames.map(game => {
-                const winner = game.results?.final_scores
-                  ? Object.entries(game.results.final_scores).sort((a: any, b: any) => b[1].total - a[1].total)[0]
-                  : null;
-                return (
-                  <div key={game.game_id} className="card" style={{ padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600, color: C.fire }}>#{game.room_code}</span>
-                      <span style={{ marginLeft: "0.75rem", color: C.muted, fontSize: "0.85rem" }}>{game.players.length} players</span>
-                    </div>
-                    <div style={{ color: C.muted, fontSize: "0.85rem" }}>
-                      {winner ? `🏆 ${(winner[1] as any).player_name}` : "Completed"}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "2rem" }}>
+          <button className="btn-primary" onClick={createRoom} disabled={loading} style={{ width: "100%" }}>
+            🔥 Create Multiplayer Room
+          </button>
+          <button className="btn-secondary" onClick={createSoloRoom} disabled={loading} style={{ width: "100%" }}>
+            🤖 Solo Arena (vs AI Bots)
+          </button>
+          <div style={{ textAlign: "center", color: C.muted, fontSize: "0.85rem", padding: "0.5rem 0" }}>— or —</div>
+          <input
+            type="text"
+            placeholder="Enter room code..."
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === "Enter" && joinRoom()}
+          />
+          <button className="btn-outline" onClick={joinRoom} disabled={loading} style={{ width: "100%" }}>
+            Join Room
+          </button>
         </div>
 
-        {/* How to play */}
-        <div className="card" style={{ marginTop: "2rem" }}>
-          <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.06em", color: C.muted }}>How It Works</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-            {[
-              { step: "1", text: "Host creates a room, 2–4 more players join" },
-              { step: "2", text: "Everyone picks a scenario and submits their spiciest take" },
-              { step: "3", text: "Vote on each other's takes" },
-              { step: "4", text: "AI judges rank every take — highest score wins!" },
-            ].map(s => (
-              <div key={s.step} style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-                <div style={{ width: 26, height: 26, borderRadius: "50%", background: `${C.primary}22`, border: `1px solid ${C.primary}44`, color: C.primary, fontWeight: 700, fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.step}</div>
-                <div style={{ color: C.muted, fontSize: "0.9rem", paddingTop: "0.25rem" }}>{s.text}</div>
-              </div>
-            ))}
-          </div>
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ flex: 1 }}>📊 My Stats</button>
+          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ flex: 1 }}>🏆 Leaderboard</button>
         </div>
       </div>
     </div>
   );
 
-  // LOBBY
   const renderLobby = () => {
     if (!currentRoom) return null;
     const isHost = currentRoom.host === playerAddress;
-    const readyCount = currentRoom.players.filter(p => p.ready).length;
-    const canStart = isHost && currentRoom.players.length >= 3;
+    const isSolo = currentRoom.solo_mode === true;
+    const canStart = isHost && currentRoom.players.length >= (isSolo ? 1 : 3);
     const myPlayer = currentRoom.players.find(p => p.address === playerAddress);
 
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
-          {/* Room code banner */}
-          <div className="card" style={{ textAlign: "center", marginBottom: "1.5rem", background: `linear-gradient(135deg, ${C.primary}18, ${C.fire}10)`, borderColor: `${C.primary}40` }}>
-            <div style={{ color: C.muted, fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.5rem" }}>Room Code — Share with friends</div>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3.5rem", letterSpacing: "0.2em", color: C.primary }} className="fireGlow">
-              {currentRoom.room_code}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+            <div>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>
+                {isSolo ? "SOLO ARENA" : "LOBBY"}
+              </div>
+              <div style={{ color: C.muted, fontSize: "0.9rem" }}>Room: <strong>{currentRoom.room_code}</strong></div>
             </div>
-            <button
-              className="btn-outline"
-              style={{ marginTop: "0.75rem", padding: "0.5rem 1.25rem", fontSize: "0.85rem" }}
-              onClick={() => navigator.clipboard.writeText(currentRoom.room_code)}
-            >
-              📋 Copy Code
-            </button>
+            <div style={{ display: "flex", gap: "0.65rem" }}>
+              <button className="btn-outline" onClick={copyRoomCode} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>📋 Copy</button>
+              <button className="btn-outline" onClick={goHome} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>← Leave</button>
+            </div>
           </div>
 
-          {/* Players */}
           <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1.25rem" }}>
-              <div style={{ fontWeight: 700 }}>Players ({currentRoom.players.length}/5)</div>
-              <div style={{ color: C.muted, fontSize: "0.9rem" }}>{readyCount} ready</div>
+            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
+              Players ({currentRoom.players.length}/5)
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {currentRoom.players.map(player => (
-                <div key={player.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.85rem 1rem", background: player.address === playerAddress ? `${C.primary}12` : C.surface, borderRadius: 10, border: player.address === playerAddress ? `1px solid ${C.primary}40` : `1px solid ${C.border}` }}>
+              {currentRoom.players.map((p) => (
+                <div key={p.address} style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "0.9rem 1rem",
+                  borderRadius: 10,
+                  background: p.address === playerAddress ? `${C.primary}10` : C.bg,
+                  border: `1.5px solid ${p.address === playerAddress ? C.primary + "40" : C.border}`,
+                }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.9rem" }}>
-                      {player.name[0].toUpperCase()}
-                    </div>
+                    <div style={{ fontSize: "1.5rem" }}>{p.address.startsWith("bot_") ? "🤖" : "👤"}</div>
                     <div>
-                      <span style={{ fontWeight: 600 }}>{player.name}</span>
-                      {player.address === currentRoom.host && <span className="tag tag-gold" style={{ marginLeft: "0.5rem" }}>HOST</span>}
-                      {player.address === playerAddress && <span style={{ marginLeft: "0.5rem", color: C.muted, fontSize: "0.8rem" }}>(you)</span>}
+                      <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                        {p.name}
+                        {p.address === currentRoom.host && <span style={{ color: C.fire, marginLeft: "0.5rem", fontSize: "0.8rem" }}>👑 HOST</span>}
+                      </div>
+                      <div style={{ color: C.muted, fontSize: "0.78rem" }}>{p.address.slice(0, 12)}...</div>
                     </div>
                   </div>
-                  <div style={{ fontSize: "0.9rem" }}>
-                    {player.ready ? <span style={{ color: C.green }}>✅ Ready</span> : <span style={{ color: C.muted }}>⏳ Waiting</span>}
+                  <div>
+                    {p.ready ? (
+                      <div style={{ color: C.secondary, fontWeight: 700, fontSize: "0.85rem" }}>✓ READY</div>
+                    ) : (
+                      <div style={{ color: C.muted, fontSize: "0.85rem" }}>Waiting...</div>
+                    )}
                   </div>
-                </div>
-              ))}
-              {[...Array(5 - currentRoom.players.length)].map((_, i) => (
-                <div key={i} style={{ padding: "0.85rem 1rem", borderRadius: 10, border: `1.5px dashed ${C.border}`, color: C.muted, textAlign: "center", fontSize: "0.9rem" }}>
-                  Waiting for player {currentRoom.players.length + i + 1}...
                 </div>
               ))}
             </div>
           </div>
 
-          {renderError()}
+          {!isSolo && (
+            <div className="card" style={{ background: `${C.fire}10`, borderColor: `${C.fire}40`, marginBottom: "1.5rem" }}>
+              <div style={{ fontSize: "0.9rem", color: C.text }}>
+                <strong>Share this code:</strong> <span style={{ color: C.fire, fontWeight: 700, fontSize: "1.1rem" }}>{currentRoom.room_code}</span>
+                <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: "0.25rem" }}>Friends can join from the homepage</div>
+              </div>
+            </div>
+          )}
 
-          {/* Actions */}
           <div style={{ display: "flex", gap: "0.75rem" }}>
             {isHost ? (
-              <button className="btn-primary" style={{ flex: 1 }} onClick={startGame} disabled={!canStart || loading}>
-                {canStart ? `🚀 Start Game (${readyCount}/${currentRoom.players.length} ready)` : `Need 3+ players (${currentRoom.players.length}/3)`}
-              </button>
-            ) : (
-              <button className={myPlayer?.ready ? "btn-outline" : "btn-primary"} style={{ flex: 1 }} onClick={toggleReady} disabled={loading}>
-                {myPlayer?.ready ? "✅ Mark Not Ready" : "✋ Mark Ready"}
-              </button>
-            )}
-            <button className="btn-outline" onClick={goHome}>Leave</button>
-          </div>
-          {isHost && !canStart && (
-            <div style={{ textAlign: "center", color: C.muted, fontSize: "0.85rem", marginTop: "0.75rem" }}>
-              Need at least 3 players to start the game
-            </div>
-          )}
-          {!isHost && (
-            <div style={{ textAlign: "center", color: C.muted, fontSize: "0.85rem", marginTop: "0.75rem" }}>
-              Waiting for host to start...
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // GAME — Round 1
-  const renderRound1 = () => {
-    if (!currentRoom) return null;
-    const isHost = currentRoom.host === playerAddress;
-    const mySubmissionKey = selectedScenario !== null ? `${playerAddress}_${selectedScenario}` : null;
-    const hasSubmitted = mySubmissionKey ? !!currentRoom.submissions[mySubmissionKey] : submitted;
-
-    return (
-      <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
-        <div style={{ maxWidth: 760, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.75rem" }}>
-            <div>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.8rem", letterSpacing: "0.06em", color: C.primary }}>ROUND 1 — YOUR TAKE</div>
-              <div style={{ color: C.muted, fontSize: "0.85rem" }}>Room {currentRoom.room_code} · {currentRoom.players.length} players</div>
-            </div>
-            <span className="tag tag-fire">SUBMISSION PHASE</span>
-          </div>
-
-          {/* Scenarios */}
-          <div style={{ marginBottom: "1.5rem" }}>
-            <div style={{ color: C.muted, fontWeight: 600, fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.85rem" }}>Choose a Scenario</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.85rem" }}>
-              {currentRoom.scenarios.map(scenario => (
-                <div
-                  key={scenario.id}
-                  onClick={() => !hasSubmitted && setSelectedScenario(scenario.id)}
-                  style={{
-                    background: selectedScenario === scenario.id ? `${C.primary}18` : C.card,
-                    border: `1.5px solid ${selectedScenario === scenario.id ? C.primary : C.border}`,
-                    borderRadius: 14,
-                    padding: "1.25rem",
-                    cursor: hasSubmitted ? "default" : "pointer",
-                    transition: "all 0.2s",
-                    transform: selectedScenario === scenario.id ? "translateY(-2px)" : "none",
-                  }}
-                >
-                  <div style={{ fontSize: "1.75rem", marginBottom: "0.5rem" }}>{scenarioEmoji(scenario.type)}</div>
-                  <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>{scenario.title}</div>
-                  <div style={{ color: C.muted, fontSize: "0.85rem", marginBottom: "0.75rem" }}>{scenario.description}</div>
-                  <div style={{ background: C.surface, borderRadius: 8, padding: "0.6rem 0.75rem", fontSize: "0.82rem", color: C.text, fontStyle: "italic" }}>
-                    "{scenario.content}"
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Take form */}
-          {selectedScenario !== null && !hasSubmitted && (
-            <div className="card fadeIn" style={{ marginBottom: "1.25rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "1rem" }}>Your Hot Take</div>
-
-              {/* Stance */}
-              <div style={{ display: "flex", gap: "0.65rem", marginBottom: "1rem" }}>
-                {[
-                  { value: "genius", label: "🔥 Genius", color: C.fire },
-                  { value: "trash", label: "🗑️ Trash", color: C.primary },
-                  { value: "spicy", label: "😈 Spicy", color: C.purple },
-                ].map(s => (
-                  <button
-                    key={s.value}
-                    onClick={() => setStance(s.value)}
-                    style={{
-                      flex: 1,
-                      padding: "0.75rem",
-                      border: `1.5px solid ${stance === s.value ? s.color : C.border}`,
-                      background: stance === s.value ? `${s.color}18` : C.surface,
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      color: stance === s.value ? s.color : C.muted,
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-
-              <textarea
-                placeholder="Drop your hottest take (max 100 chars)..."
-                value={hotTake}
-                onChange={e => { if (e.target.value.length <= 100) setHotTake(e.target.value); }}
-                rows={3}
-              />
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.5rem", marginBottom: "1rem" }}>
-                <div style={{ color: hotTake.length > 90 ? C.primary : C.muted, fontSize: "0.82rem" }}>{hotTake.length}/100</div>
-              </div>
-
-              {renderError()}
-
               <button
                 className="btn-primary"
-                style={{ width: "100%" }}
-                onClick={submitTake}
-                disabled={!stance || hotTake.length < 10 || loading}
+                onClick={startGame}
+                disabled={!canStart || loading}
+                style={{ flex: 1 }}
               >
-                🔥 Submit Take
+                {canStart ? "🚀 Start Game" : `Need ${isSolo ? 1 : 3}+ players`}
               </button>
-            </div>
-          )}
-
-          {hasSubmitted && (
-            <div className="card fadeIn" style={{ textAlign: "center", padding: "2rem", background: `${C.green}10`, borderColor: `${C.green}40` }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>✅</div>
-              <div style={{ fontWeight: 700, color: C.green, marginBottom: "0.5rem" }}>Take submitted!</div>
-              <div style={{ color: C.muted }}>Waiting for other players...</div>
-              {isHost && (
-                <button className="btn-outline" style={{ marginTop: "1.25rem" }} onClick={advanceToVoting} disabled={loading}>
-                  ➡️ Advance to Voting (Host)
-                </button>
-              )}
-            </div>
-          )}
-
-          {selectedScenario === null && (
-            <div className="card" style={{ textAlign: "center", color: C.muted, padding: "2rem" }}>
-              👆 Select a scenario above to submit your hot take
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // GAME — Round 2 (Voting)
-  const renderRound2 = () => {
-    if (!currentRoom) return null;
-    const isHost = currentRoom.host === playerAddress;
-
-    // Build list of other players' submissions (not mine)
-    const otherSubmissions = Object.entries(currentRoom.submissions)
-      .filter(([key]) => !key.startsWith(playerAddress))
-      .map(([key, sub]: [string, any]) => ({ key, ...sub }));
-
-    const uniqueOtherPlayers = [...new Set(otherSubmissions.map((s: any) => s.player))];
-
-    return (
-      <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
-        <div style={{ maxWidth: 760, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.75rem" }}>
-            <div>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.8rem", letterSpacing: "0.06em", color: C.gold }}>ROUND 2 — VOTING</div>
-              <div style={{ color: C.muted, fontSize: "0.85rem" }}>Room {currentRoom.room_code}</div>
-            </div>
-            <span className="tag tag-gold">VOTE PHASE</span>
+            ) : (
+              <button
+                className="btn-outline"
+                onClick={toggleReady}
+                disabled={loading || isSolo}
+                style={{ flex: 1 }}
+              >
+                {myPlayer?.ready ? "❌ Not Ready" : "✓ Ready Up"}
+              </button>
+            )}
           </div>
 
-          {!votesSubmitted ? (
-            <>
-              <div className="card" style={{ marginBottom: "1.5rem" }}>
-                <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Vote for the best takes</div>
-                <div style={{ color: C.muted, fontSize: "0.9rem" }}>Pick the player(s) whose takes you thought were best. You can vote for multiple players.</div>
-              </div>
-
-              {uniqueOtherPlayers.length === 0 ? (
-                <div className="card" style={{ textAlign: "center", color: C.muted }}>No submissions from other players yet.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1.5rem" }}>
-                  {uniqueOtherPlayers.map(playerAddr => {
-                    const playerSubs = otherSubmissions.filter((s: any) => s.player === playerAddr);
-                    const playerNameDisplay = currentRoom.players.find(p => p.address === playerAddr)?.name || playerAddr.slice(0, 8) + "...";
-                    const votes = Object.values(myVotes);
-                    const isVoted = votes.includes(playerAddr);
-
-                    return (
-                      <div
-                        key={playerAddr}
-                        onClick={() => {
-                          setMyVotes(prev => {
-                            const newVotes = { ...prev };
-                            const idx = Object.values(newVotes).indexOf(playerAddr);
-                            if (idx >= 0) {
-                              delete newVotes[Object.keys(newVotes)[idx]];
-                            } else {
-                              newVotes[Date.now()] = playerAddr;
-                            }
-                            return newVotes;
-                          });
-                        }}
-                        style={{
-                          background: isVoted ? `${C.gold}14` : C.card,
-                          border: `1.5px solid ${isVoted ? C.gold : C.border}`,
-                          borderRadius: 14,
-                          padding: "1.25rem",
-                          cursor: "pointer",
-                          transition: "all 0.2s",
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-                          <div style={{ fontWeight: 700 }}>{playerNameDisplay}</div>
-                          {isVoted && <span style={{ color: C.gold, fontSize: "1.2rem" }}>⭐</span>}
-                        </div>
-                        {playerSubs.map((sub: any) => {
-                          const scenario = currentRoom.scenarios[sub.scenario_index];
-                          return (
-                            <div key={sub.key} style={{ background: C.surface, borderRadius: 8, padding: "0.75rem", marginTop: "0.5rem" }}>
-                              <div style={{ fontSize: "0.8rem", color: C.muted, marginBottom: "0.3rem" }}>
-                                {scenario?.title} · <span style={{ color: sub.stance === "genius" ? C.fire : sub.stance === "trash" ? C.primary : C.purple }}>
-                                  {sub.stance === "genius" ? "🔥 Genius" : sub.stance === "trash" ? "🗑️ Trash" : "😈 Spicy"}
-                                </span>
-                              </div>
-                              <div style={{ fontStyle: "italic", fontSize: "0.9rem" }}>"{sub.take}"</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
+          {isSolo && (
+            <div className="card" style={{ marginTop: "1.5rem", background: `${C.secondary}10`, borderColor: `${C.secondary}40` }}>
+              <div style={{ fontSize: "0.9rem", color: C.text }}>
+                <strong>🤖 AI Bot Lineup:</strong>
+                <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                  {["AgreeBot", "DevilBot", "JokerBot", "ThinkBot"].map(bot => (
+                    <div key={bot} style={{ fontSize: "0.85rem", color: C.muted }}>• {bot}</div>
+                  ))}
                 </div>
-              )}
-
-              {renderError()}
-
-              <div style={{ display: "flex", gap: "0.75rem" }}>
-                <button
-                  className="btn-gold"
-                  style={{ flex: 1 }}
-                  onClick={submitVotes}
-                  disabled={Object.keys(myVotes).length === 0 || loading}
-                >
-                  🗳️ Submit Votes ({Object.keys(myVotes).length} selected)
-                </button>
-                {isHost && (
-                  <button className="btn-outline" onClick={calculateResults} disabled={loading}>
-                    ⚡ Calculate Results (Host)
-                  </button>
-                )}
               </div>
-            </>
-          ) : (
-            <div className="card" style={{ textAlign: "center", padding: "2.5rem", background: `${C.gold}10`, borderColor: `${C.gold}40` }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>🗳️</div>
-              <div style={{ fontWeight: 700, color: C.gold, marginBottom: "0.5rem" }}>Votes submitted!</div>
-              <div style={{ color: C.muted }}>Waiting for all players to vote...</div>
-              {isHost && (
-                <button className="btn-gold" style={{ marginTop: "1.25rem" }} onClick={calculateResults} disabled={loading}>
-                  ⚡ Calculate Final Results (Host)
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -996,68 +728,251 @@ export default function HotTakeProtocol() {
 
   const renderGame = () => {
     if (!currentRoom) return null;
-    if (currentRoom.status === "round_1") return renderRound1();
-    if (currentRoom.status === "round_2") return renderRound2();
-    return null;
+    const mySubmission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(playerAddress));
+    const hasSubmitted = !!mySubmission;
+    const isRound1 = currentRoom.status === "round_1";
+    const isRound2 = currentRoom.status === "round_2";
+
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>
+              {isRound1 ? "ROUND 1: HOT TAKES" : "ROUND 2: VOTING"}
+            </div>
+            <div style={{ color: C.muted, fontSize: "0.85rem" }}>Room: {currentRoom.room_code}</div>
+          </div>
+
+          {isRound1 && (
+            <>
+              {!hasSubmitted ? (
+                <>
+                  <div className="card" style={{ marginBottom: "1.5rem" }}>
+                    <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Choose Your Scenario</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                      {currentRoom.scenarios.map((s, i) => (
+                        <div
+                          key={i}
+                          onClick={() => setSelectedScenario(i)}
+                          style={{
+                            padding: "1rem 1.25rem",
+                            borderRadius: 12,
+                            border: `2px solid ${selectedScenario === i ? C.primary : C.border}`,
+                            background: selectedScenario === i ? `${C.primary}08` : C.surface,
+                            cursor: "pointer",
+                            transition: "all 0.2s",
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, marginBottom: "0.3rem", color: selectedScenario === i ? C.primary : C.text }}>
+                            {s.title}
+                          </div>
+                          <div style={{ fontSize: "0.85rem", color: C.muted }}>{s.description}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {selectedScenario !== null && (
+                    <div className="card slide-up" style={{ marginBottom: "1.5rem" }}>
+                      <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>Your Stance</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.25rem" }}>
+                        {[
+                          { value: "genius", label: "🔥 Genius", class: "stance-genius" },
+                          { value: "trash", label: "🗑️ Trash", class: "stance-trash" },
+                          { value: "spicy", label: "😈 Spicy", class: "stance-spicy" },
+                        ].map(({ value, label, class: className }) => (
+                          <div
+                            key={value}
+                            onClick={() => setSelectedStance(value)}
+                            className={className}
+                            style={{
+                              padding: "0.85rem",
+                              borderRadius: 10,
+                              textAlign: "center",
+                              fontWeight: 700,
+                              fontSize: "0.9rem",
+                              cursor: "pointer",
+                              border: `2px solid ${selectedStance === value ? "#1A202C" : "transparent"}`,
+                              opacity: selectedStance === value ? 1 : 0.7,
+                              transition: "all 0.2s",
+                            }}
+                          >
+                            {label}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ fontWeight: 700, marginBottom: "0.75rem", fontSize: "1rem" }}>Your Take (100 chars max)</div>
+                      <textarea
+                        placeholder="Write your hot take..."
+                        value={takeText}
+                        onChange={(e) => setTakeText(e.target.value.slice(0, 100))}
+                        style={{ marginBottom: "0.5rem" }}
+                      />
+                      <div style={{ textAlign: "right", color: C.muted, fontSize: "0.85rem", marginBottom: "1rem" }}>
+                        {takeText.length}/100
+                      </div>
+                      <button
+                        className="btn-primary"
+                        onClick={submitTake}
+                        disabled={!selectedStance || !takeText.trim() || loading}
+                        style={{ width: "100%" }}
+                      >
+                        🔥 Submit Take
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✓</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div>
+                  <div style={{ color: C.muted, marginBottom: "1.5rem" }}>Waiting for other players...</div>
+                  <div className="pulse" style={{ color: C.fire, fontSize: "0.9rem" }}>
+                    {currentRoom.players.filter(p => Object.keys(currentRoom.submissions).some(k => k.startsWith(p.address))).length}/{currentRoom.players.length} submitted
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {isRound2 && (
+            <>
+              <div className="card" style={{ marginBottom: "1.5rem" }}>
+                <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
+                  Vote for the Best Takes (select up to 3)
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                  {currentRoom.players
+                    .filter(p => p.address !== playerAddress)
+                    .map(p => {
+                      const submission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(p.address));
+                      if (!submission) return null;
+                      const [, data] = submission;
+                      const scenario = currentRoom.scenarios[data.scenario_index];
+                      const isVoted = Object.values(votes).includes(p.address);
+                      
+                      return (
+                        <div
+                          key={p.address}
+                          onClick={() => {
+                            if (Object.keys(votes).length >= 3 && !isVoted) return;
+                            const newVotes = { ...votes };
+                            const voteKeys = Object.keys(newVotes);
+                            const existingKey = voteKeys.find(k => newVotes[k] === p.address);
+                            
+                            if (existingKey) {
+                              delete newVotes[existingKey];
+                            } else {
+                              newVotes[Date.now().toString()] = p.address;
+                            }
+                            setVotes(newVotes);
+                          }}
+                          style={{
+                            padding: "1rem 1.25rem",
+                            borderRadius: 12,
+                            border: `2px solid ${isVoted ? C.primary : C.border}`,
+                            background: isVoted ? `${C.primary}08` : C.surface,
+                            cursor: "pointer",
+                            transition: "all 0.2s",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.name}</div>
+                              <div style={{ fontSize: "0.78rem", color: C.muted }}>{scenario?.title}</div>
+                            </div>
+                            <div
+                              className={`stance-${data.stance}`}
+                              style={{
+                                padding: "0.4rem 0.75rem",
+                                borderRadius: 8,
+                                fontSize: "0.75rem",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {data.stance === "genius" ? "🔥" : data.stance === "trash" ? "🗑️" : "😈"}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: "0.9rem", fontStyle: "italic", color: C.text }}>
+                            "{data.take}"
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "1rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>
+                {Object.keys(votes).length}/3 votes cast
+              </div>
+
+              <button
+                className="btn-primary"
+                onClick={submitVotes}
+                disabled={Object.keys(votes).length === 0 || loading}
+                style={{ width: "100%" }}
+              >
+                Submit Votes ({Object.keys(votes).length})
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
   };
 
-  // RESULTS
   const renderResults = () => {
-    if (!currentRoom || !currentRoom.results) {
-      return (
-        <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "3rem" }} className="spin">🔥</div>
-            <div style={{ color: C.muted, marginTop: "1rem" }}>Calculating results...</div>
-          </div>
-        </div>
-      );
-    }
-
-    const scores = currentRoom.results.final_scores || {};
-    const sorted = Object.entries(scores).sort((a: any, b: any) => b[1].total - a[1].total);
-    const aiRankings = currentRoom.results.ai_rankings || {};
+    if (!currentRoom || !currentRoom.results) return null;
+    const { final_scores, ai_rankings, player_votes } = currentRoom.results;
+    const sortedScores = Object.entries(final_scores || {})
+      .map(([addr, data]: [string, any]) => ({ address: addr, ...data }))
+      .sort((a: any, b: any) => b.total - a.total);
 
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "clamp(2.5rem,8vw,4.5rem)", letterSpacing: "0.05em" }}>
-              <span style={{ color: C.gold }} className="fireGlow">GAME OVER</span>
+            <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>
+              {sortedScores[0]?.address === playerAddress ? "🏆" : "🔥"}
             </div>
-            <div style={{ color: C.muted, marginTop: "0.5rem" }}>Room {currentRoom.room_code}</div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3rem", letterSpacing: "0.06em" }}>
+              {sortedScores[0]?.address === playerAddress ? "VICTORY!" : "GAME OVER"}
+            </div>
           </div>
 
-          {/* Podium */}
           <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.06em", color: C.muted }}>Final Standings</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
-              {sorted.map(([address, data]: [string, any], i) => {
+            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>Final Scores</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {sortedScores.map((score: any, i: number) => {
                 const medals = ["🥇", "🥈", "🥉"];
-                const isMe = address === playerAddress;
-                const isWinner = i === 0;
                 return (
-                  <div key={address} style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "1rem 1.25rem",
-                    borderRadius: 12,
-                    background: isWinner ? `linear-gradient(135deg, ${C.gold}25, ${C.fire}15)` : isMe ? `${C.primary}12` : C.surface,
-                    border: `1.5px solid ${isWinner ? C.gold + "60" : isMe ? C.primary + "50" : C.border}`,
-                  }}>
+                  <div
+                    key={score.address}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "1rem 1.25rem",
+                      borderRadius: 12,
+                      background: score.address === playerAddress ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg,
+                      border: `2px solid ${score.address === playerAddress ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
+                    }}
+                  >
                     <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.3rem" }}>{medals[i] || `${i + 1}.`}</div>
+                      <div style={{ fontSize: "1.5rem", minWidth: 32 }}>{medals[i] || `${i + 1}.`}</div>
                       <div>
-                        <div style={{ fontWeight: 700 }}>
-                          {data.player_name}
-                          {isMe && <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.8rem" }}> (you)</span>}
+                        <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>
+                          {score.player_name}
+                          {score.address === playerAddress && <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>}
                         </div>
-                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>AI: {data.ai_points}pts · Vote bonus: {data.vote_bonus}pts</div>
+                        <div style={{ fontSize: "0.78rem", color: C.muted" }}>
+                          AI: {score.ai_points}pts · Votes: +{score.vote_bonus}
+                        </div>
                       </div>
                     </div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.8rem", color: isWinner ? C.gold : C.text, letterSpacing: "0.05em" }}>
-                      {data.total}
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.75rem", color: i === 0 ? C.gold : C.text }}>
+                      {score.total}
                     </div>
                   </div>
                 );
@@ -1065,24 +980,38 @@ export default function HotTakeProtocol() {
             </div>
           </div>
 
-          {/* AI Reasoning */}
-          {Object.keys(aiRankings).length > 0 && (
+          {ai_rankings && (
             <div className="card" style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.06em", color: C.muted }}>🤖 AI Judge Reasoning</div>
-              {Object.entries(aiRankings).map(([scenarioKey, rankings]: [string, any]) => {
+              <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>🤖 AI Judge Reasoning</div>
+              {Object.entries(ai_rankings).map(([scenarioKey, rankings]: [string, any]) => {
                 const scenarioIdx = parseInt(scenarioKey.replace("scenario_", ""));
                 const scenario = currentRoom.scenarios[scenarioIdx];
                 return (
                   <div key={scenarioKey} style={{ marginBottom: "1rem" }}>
-                    <div style={{ fontWeight: 600, marginBottom: "0.5rem", color: C.fire }}>{scenario?.title || scenarioKey}</div>
+                    <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>
+                      {scenario?.title || scenarioKey}
+                    </div>
                     {Array.isArray(rankings) && rankings.map((rank: any) => {
                       const pName = currentRoom.players.find(p => p.address === rank.player)?.name || rank.player?.slice(0, 8) + "...";
                       return (
-                        <div key={rank.player} style={{ display: "flex", gap: "0.75rem", padding: "0.65rem 0.85rem", background: C.surface, borderRadius: 8, marginBottom: "0.4rem" }}>
-                          <div style={{ color: rank.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 20 }}>#{rank.rank}</div>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{pName} · <span style={{ color: C.muted, fontWeight: 400 }}>{rank.score}pts</span></div>
-                            <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>{rank.reasoning}</div>
+                        <div key={rank.player} style={{
+                          display: "flex",
+                          gap: "0.75rem",
+                          padding: "0.75rem 0.85rem",
+                          background: C.bg,
+                          borderRadius: 8,
+                          marginBottom: "0.5rem",
+                        }}>
+                          <div style={{ color: rank.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24, fontSize: "0.9rem" }}>
+                            #{rank.rank}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>
+                              {pName} · <span style={{ color: C.muted, fontWeight: 400 }}>{rank.score}pts</span>
+                            </div>
+                            <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>
+                              {rank.reasoning}
+                            </div>
                           </div>
                         </div>
                       );
@@ -1094,7 +1023,9 @@ export default function HotTakeProtocol() {
           )}
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            <button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>🔥 Play Again</button>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>
+              🔥 Play Again
+            </button>
             <button className="btn-outline" onClick={goHome}>🏠 Home</button>
           </div>
         </div>
@@ -1102,7 +1033,6 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // STATS
   const renderStats = () => {
     const [myStats, setMyStats] = useState<any>(null);
     const [statsLoading, setStatsLoading] = useState(true);
@@ -1120,12 +1050,12 @@ export default function HotTakeProtocol() {
         <div style={{ maxWidth: 580, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>MY STATS</div>
-            <button className="btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
           </div>
 
           {statsLoading ? (
             <div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}>
-              <div className="spin" style={{ fontSize: "2rem" }}>🔥</div>
+              <div className="spin" style={{ fontSize: "2.5rem" }}>🔥</div>
               <div style={{ marginTop: "1rem" }}>Loading stats...</div>
             </div>
           ) : myStats ? (
@@ -1138,16 +1068,22 @@ export default function HotTakeProtocol() {
                   { label: "Win Rate", value: myStats.games_played > 0 ? `${Math.round(myStats.wins / myStats.games_played * 100)}%` : "—", icon: "📊" },
                 ].map(stat => (
                   <div key={stat.label} className="card" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "1.75rem", marginBottom: "0.5rem" }}>{stat.icon}</div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", color: C.primary }}>{stat.value}</div>
+                    <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{stat.icon}</div>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>
+                      {stat.value}
+                    </div>
                     <div style={{ color: C.muted, fontSize: "0.85rem" }}>{stat.label}</div>
                   </div>
                 ))}
               </div>
               {myStats.best_performance && (
                 <div className="card" style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}>
-                  <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem" }}>🏅 Best Performance</div>
-                  <div style={{ color: C.muted, fontSize: "0.9rem" }}>Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}</div>
+                  <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>
+                    🏅 Best Performance
+                  </div>
+                  <div style={{ color: C.muted, fontSize: "0.9rem" }}>
+                    Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}
+                  </div>
                 </div>
               )}
             </>
@@ -1162,15 +1098,18 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // LEADERBOARD
   const renderLeaderboard = () => (
     <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
       <div style={{ maxWidth: 680, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🏆 LEADERBOARD</div>
           <div style={{ display: "flex", gap: "0.65rem" }}>
-            <button className="btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>↻ Refresh</button>
-            <button className="btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>
+              ↻ Refresh
+            </button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>
+              ← Back
+            </button>
           </div>
         </div>
 
@@ -1181,7 +1120,7 @@ export default function HotTakeProtocol() {
           </div>
         ) : (
           <div className="card">
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
               {leaderboard.map((entry, i) => {
                 const medals = ["🥇", "🥈", "🥉"];
                 const isMe = entry.address === playerAddress;
@@ -1190,23 +1129,25 @@ export default function HotTakeProtocol() {
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    padding: "0.9rem 1rem",
+                    padding: "1rem 1.1rem",
                     borderRadius: 10,
-                    background: isMe ? `${C.primary}12` : i === 0 ? `${C.gold}10` : C.surface,
-                    border: `1px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
+                    background: isMe ? `${C.primary}10` : i === 0 ? `${C.gold}08` : C.bg,
+                    border: `1.5px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "30" : C.border}`,
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.2rem", minWidth: 28 }}>{medals[i] || `${i + 1}.`}</div>
+                      <div style={{ fontSize: "1.3rem", minWidth: 28 }}>{medals[i] || `${i + 1}.`}</div>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
                           {entry.address.slice(0, 10)}...
                           {isMe && <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.78rem" }}> (you)</span>}
                         </div>
-                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>{entry.games_played} games · {entry.wins} wins</div>
+                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>
+                          {entry.games_played} games · {entry.wins} wins
+                        </div>
                       </div>
                     </div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.5rem", color: i === 0 ? C.gold : C.text }}>
-                      {entry.total_points} <span style={{ fontSize: "0.7rem", color: C.muted }}>pts</span>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", color: i === 0 ? C.gold : C.text }}>
+                      {entry.total_points} <span style={{ fontSize: "0.65rem", color: C.muted }}>pts</span>
                     </div>
                   </div>
                 );
@@ -1223,9 +1164,9 @@ export default function HotTakeProtocol() {
       <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }}>
         <div className="card" style={{ maxWidth: 540, textAlign: "center" }}>
           <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>⚠️</div>
-          <div style={{ fontWeight: 700, color: C.primary, marginBottom: "0.75rem" }}>Configuration Error</div>
-          <div style={{ color: C.muted, marginBottom: "1rem" }}>{envError}</div>
-          <code style={{ display: "block", background: C.surface, padding: "0.75rem", borderRadius: 8, fontSize: "0.85rem", color: C.text }}>
+          <div style={{ fontWeight: 700, color: C.primary, marginBottom: "0.75rem", fontSize: "1.1rem" }}>Configuration Error</div>
+          <div style={{ color: C.muted, marginBottom: "1rem", fontSize: "0.95rem" }}>{envError}</div>
+          <code style={{ display: "block", background: C.bg, padding: "0.85rem", borderRadius: 8, fontSize: "0.85rem", color: C.text, border: `1px solid ${C.border}` }}>
             NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
           </code>
         </div>
