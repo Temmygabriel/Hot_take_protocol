@@ -40,21 +40,34 @@ interface Room {
 }
 
 // ============================================
-// CONTRACT HELPERS
+// CONTRACT HELPERS – store only the private key string
+// (user never sees it, auto-generated per browser)
 // ============================================
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}` | undefined;
 
-function getAccount() {
-  const stored = localStorage.getItem("genlayer_account");
-  if (stored) return JSON.parse(stored);
+function getPrivateKey(): `0x${string}` {
+  const stored = localStorage.getItem("genlayer_private_key");
+  if (stored) {
+    return stored as `0x${string}`;
+  }
   const account = createAccount();
-  localStorage.setItem("genlayer_account", JSON.stringify(account));
-  return account;
+  localStorage.setItem("genlayer_private_key", account.privateKey);
+  return account.privateKey;
 }
 
+function getAccount() {
+  const privateKey = getPrivateKey();
+  return createAccount(privateKey);
+}
+
+let clientInstance: any = null;
+
 function getClient() {
-  const account = getAccount();
-  return createClient({ chain: studionet, account });
+  if (!clientInstance) {
+    const account = getAccount();
+    clientInstance = createClient({ chain: studionet, account });
+  }
+  return clientInstance;
 }
 
 async function readContract(functionName: string, args: any[]): Promise<any> {
@@ -67,17 +80,14 @@ async function readContract(functionName: string, args: any[]): Promise<any> {
   });
 }
 
-// Simulate + write to capture return value
 async function writeContractWithReturn(functionName: string, args: any[]): Promise<any> {
   if (!CONTRACT_ADDRESS) throw new Error("Contract address not configured");
   const client = getClient();
-  // 1. Simulate to get the return value (room code)
   const returnValue = await client.simulateWriteContract({
     address: CONTRACT_ADDRESS,
     functionName,
     args,
   });
-  // 2. Execute the real transaction
   await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName,
@@ -118,15 +128,15 @@ export default function HotTakeProtocol() {
   const [envError, setEnvError] = useState<string>("");
   const pollInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // Load player address from account
   useEffect(() => {
     if (!CONTRACT_ADDRESS) {
       setEnvError("Missing NEXT_PUBLIC_CONTRACT_ADDRESS environment variable.");
     } else {
       try {
-        setPlayerAddress(getAccount().address);
-      } catch (err) {
-        setEnvError("Failed to create account: " + (err as Error).message);
+        const account = getAccount();
+        setPlayerAddress(account.address);
+      } catch (err: any) {
+        setEnvError("Failed to create account: " + err.message);
       }
     }
   }, []);
@@ -161,8 +171,8 @@ export default function HotTakeProtocol() {
     setLoading(true);
     try {
       const code = await writeContractWithReturn(isSolo ? "create_solo_room" : "create_room", [playerAddress, playerName]);
-      setRoomCode(code);
-      await fetchRoom(code);
+      setRoomCode(code as string);
+      await fetchRoom(code as string);
       setScreen("lobby");
     } catch (err: any) {
       console.error("Create room error:", err);
@@ -258,7 +268,7 @@ export default function HotTakeProtocol() {
     }
   };
 
-  // Styles
+  // Styles (unchanged)
   const colors = {
     bg: "#F5F7FA",
     card: "#FFFFFF",
@@ -303,7 +313,6 @@ export default function HotTakeProtocol() {
     border: `2px solid ${colors.primary}`,
   };
 
-  // ----- RENDER LANDING (fixed name input) -----
   const renderLanding = () => (
     <div style={containerStyle}>
       <div style={{ maxWidth: 600, margin: "0 auto", padding: "4rem 2rem", textAlign: "center" }}>
@@ -313,7 +322,6 @@ export default function HotTakeProtocol() {
           <p style={{ fontSize: "1.1rem", color: "#64748B", marginBottom: "3rem" }}>5-player debate game • AI judges • 10 minutes</p>
         </motion.div>
 
-        {/* Name input - always visible, with confirm button */}
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ ...cardStyle, marginBottom: "2rem" }}>
           <p style={{ marginBottom: "1rem", fontWeight: 600 }}>Enter your name to start</p>
           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -323,18 +331,12 @@ export default function HotTakeProtocol() {
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
               onKeyPress={(e) => { if (e.key === "Enter" && playerName.trim()) setNameConfirmed(true); }}
-              style={{ flex: 1, padding: "1rem", border: `2px solid ${colors.primary}`, borderRadius: 12, fontSize: "1rem", fontFamily: "Inter, sans-serif", outline: "none" }}
+              style={{ flex: 1, padding: "1rem", border: `2px solid ${colors.primary}`, borderRadius: 12, fontSize: "1rem", outline: "none" }}
             />
-            <button
-              style={{ ...buttonStyle, padding: "0 1.5rem" }}
-              onClick={() => { if (playerName.trim()) setNameConfirmed(true); }}
-            >
-              Set
-            </button>
+            <button style={{ ...buttonStyle, padding: "0 1.5rem" }} onClick={() => { if (playerName.trim()) setNameConfirmed(true); }}>Set</button>
           </div>
         </motion.div>
 
-        {/* Buttons only appear after name is confirmed */}
         {nameConfirmed && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             <button style={buttonStyle} onClick={() => createRoom(false)} disabled={loading}>{loading ? "Creating..." : "CREATE ROOM"}</button>
@@ -358,7 +360,6 @@ export default function HotTakeProtocol() {
     </div>
   );
 
-  // ----- RENDER LOBBY (unchanged) -----
   const renderLobby = () => {
     if (!currentRoom) return null;
     const isHost = currentRoom.host === playerAddress;
@@ -411,7 +412,6 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ----- RENDER GAME (unchanged) -----
   const renderGame = () => {
     if (!currentRoom || !currentRoom.scenarios.length) return null;
     const isHost = currentRoom.host === playerAddress;
@@ -480,7 +480,6 @@ export default function HotTakeProtocol() {
     );
   };
 
-  // ----- RENDER RESULTS (unchanged) -----
   const renderResults = () => {
     if (!currentRoom || !currentRoom.results) return null;
     const scores = currentRoom.results.final_scores;
