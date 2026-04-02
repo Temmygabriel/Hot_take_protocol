@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
@@ -90,7 +90,7 @@ async function writeContract(functionName: string, args: any[]): Promise<any> {
     interval: 3000,
   });
   // The contract's return value (e.g., room code) is in receipt.returnValue
-  return receipt.returnValue;
+  return (receipt as any).returnValue;
 }
 
 // ============================================
@@ -297,7 +297,7 @@ export default function HotTakeProtocol() {
     border: `2px solid ${colors.primary}`,
   };
 
-  // Render functions
+  // Render functions (same as before, unchanged)
   const renderLanding = () => (
     <div style={containerStyle}>
       <div style={{ maxWidth: 600, margin: "0 auto", padding: "4rem 2rem", textAlign: "center" }}>
@@ -873,6 +873,18 @@ export default function HotTakeProtocol() {
       </div>
     </div>
   );
+
+  const renderScreen = () => {
+    switch (screen) {
+      case "landing": return renderLanding();
+      case "lobby": return renderLobby();
+      case "game": return renderGame();
+      case "results": return renderResults();
+      case "stats": return renderStats();
+      case "leaderboard": return renderLeaderboard();
+      default: return renderLanding();
+    }
+  };
 
   return <div>{renderScreen()}</div>;
 }
