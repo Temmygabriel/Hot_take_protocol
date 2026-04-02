@@ -73,21 +73,24 @@ async function readContract(functionName: string, args: any[]): Promise<any> {
   return result;
 }
 
-async function writeContract(functionName: string, args: any[]): Promise<void> {
+// Write contract and return the value returned by the contract function
+async function writeContract(functionName: string, args: any[]): Promise<any> {
   const client = getClient();
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName,
     args,
     value: BigInt(0),
-    leaderOnly: true, // faster
+    leaderOnly: true,
   });
-  await client.waitForTransactionReceipt({
+  const receipt = await client.waitForTransactionReceipt({
     hash,
     status: TransactionStatus.ACCEPTED,
     retries: 60,
     interval: 3000,
   });
+  // The contract's return value (e.g., room code) is in receipt.returnValue
+  return receipt.returnValue;
 }
 
 // ============================================
@@ -215,7 +218,6 @@ export default function HotTakeProtocol() {
     try {
       await writeContract("submit_take", [roomCode, playerAddress, selectedScenario, stance, hotTake]);
       setSubmitted(true);
-      // Optionally, host could call advance_to_voting after all submits, but we'll let host do that via a button
     } catch (err) {
       console.error(err);
       alert("Failed to submit take.");
@@ -248,16 +250,6 @@ export default function HotTakeProtocol() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Helper to generate a room code (only for UI, contract generates its own)
-  const generateMockRoomCode = () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let code = "";
-    for (let i = 0; i < 4; i++) {
-      code += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return code;
   };
 
   // Styles (unchanged from your original)
@@ -305,7 +297,7 @@ export default function HotTakeProtocol() {
     border: `2px solid ${colors.primary}`,
   };
 
-  // Render functions (same as original but with real actions)
+  // Render functions
   const renderLanding = () => (
     <div style={containerStyle}>
       <div style={{ maxWidth: 600, margin: "0 auto", padding: "4rem 2rem", textAlign: "center" }}>
@@ -622,7 +614,6 @@ export default function HotTakeProtocol() {
   const renderGame = () => {
     if (!currentRoom || !currentRoom.scenarios.length) return null;
     const isHost = currentRoom.host === playerAddress;
-    const allSubmitted = currentRoom.status === "round_2"; // after host advances
 
     return (
       <div style={containerStyle}>
