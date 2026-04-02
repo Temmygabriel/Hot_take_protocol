@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient, createAccount } from "genlayer-js";
+import { createClient, createAccount, generatePrivateKey } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
@@ -44,19 +44,37 @@ interface Room {
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}` | undefined;
 const MAX_ATTEMPTS = 3;
 
+/**
+ * KEY FIX: Store ONLY the private key in localStorage.
+ * Previously, the full account object (with methods) was stored as JSON.
+ * JSON.stringify strips methods, so JSON.parse returned a plain object
+ * without signTransaction() — causing "Account does not support signTransaction".
+ *
+ * Solution: Store just the hex private key string.
+ * Recreate the full account each time via createAccount(privateKey).
+ */
 function getOrCreateAccount() {
-  if (typeof window === "undefined") return createAccount();
-  const stored = localStorage.getItem("htp_account");
-  if (stored) {
-    try { return JSON.parse(stored); } catch {}
+  if (typeof window === "undefined") {
+    // SSR: generate a temporary account
+    return createAccount();
   }
-  const account = createAccount();
-  localStorage.setItem("htp_account", JSON.stringify(account));
-  return account;
+  const storedKey = localStorage.getItem("htp_private_key");
+  if (storedKey) {
+    try {
+      return createAccount(storedKey as `0x${string}`);
+    } catch {
+      // If stored key is invalid, generate a new one
+    }
+  }
+  // Generate a new private key and store only the key (not the account object)
+  const privateKey = generatePrivateKey();
+  localStorage.setItem("htp_private_key", privateKey);
+  return createAccount(privateKey);
 }
 
 function makeClient() {
   const account = getOrCreateAccount();
+  // Pass the full account (with private key) so client can sign transactions
   const client = createClient({ chain: studionet, account });
   return { client, account };
 }
@@ -108,11 +126,13 @@ async function writeContractWithReturn(functionName: string, args: any[]): Promi
     try {
       const { client } = makeClient();
       console.log(`writeContractWithReturn attempt ${attempt}/${MAX_ATTEMPTS}: ${functionName}`);
+      // Simulate first to get return value
       const returnValue = await client.simulateWriteContract({
         address: CONTRACT_ADDRESS,
         functionName,
         args,
       });
+      // Then execute the real transaction
       const hash = await client.writeContract({
         address: CONTRACT_ADDRESS,
         functionName,
@@ -158,9 +178,9 @@ const C = {
 };
 
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Bebas+Neue&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif; line-height: 1.6; }
+  body { background: ${C.bg}; color: ${C.text}; font-family: 'Space Grotesk', sans-serif; line-height: 1.6; }
   ::placeholder { color: ${C.muted}; }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: ${C.bg}; }
@@ -173,7 +193,7 @@ const css = `
     border: 2px solid ${C.border}; 
     border-radius: 12px; 
     padding: 0.9rem 1.1rem; 
-    font-family: 'DM Sans', sans-serif; 
+    font-family: 'Space Grotesk', sans-serif; 
     font-size: 1rem; 
     outline: none; 
     transition: all 0.2s; 
@@ -203,7 +223,7 @@ const css = `
     cursor: pointer; 
     transition: all 0.2s; 
     box-shadow: ${C.shadow};
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
   }
   .btn-primary:hover:not(:disabled) { 
     transform: translateY(-2px); 
@@ -222,7 +242,7 @@ const css = `
     font-size: 1rem; 
     cursor: pointer; 
     transition: all 0.2s;
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
   }
   .btn-outline:hover:not(:disabled) { 
     border-color: ${C.primary}; 
@@ -233,7 +253,7 @@ const css = `
 
   .btn-secondary {
     background: ${C.secondary};
-    color: white;
+    color: #1A202C;
     border: none;
     border-radius: 12px;
     padding: 0.95rem 1.75rem;
@@ -242,12 +262,13 @@ const css = `
     cursor: pointer;
     transition: all 0.2s;
     box-shadow: ${C.shadow};
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
   }
   .btn-secondary:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: ${C.shadowHover};
   }
+  .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .stance-genius { background: linear-gradient(135deg, ${C.gold}, ${C.fire}); color: #1A202C; }
   .stance-trash { background: #CBD5E0; color: #1A202C; }
@@ -264,6 +285,109 @@ const css = `
 
   .slide-up { animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
   @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Landing hero styles */
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: ${C.primary}12;
+    border: 1px solid ${C.primary}30;
+    border-radius: 100px;
+    padding: 6px 16px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: ${C.primary};
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+  .hero-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(3.5rem, 10vw, 6rem);
+    line-height: 0.92;
+    letter-spacing: -0.01em;
+    color: ${C.text};
+    margin-bottom: 1.5rem;
+  }
+  .hero-title .highlight {
+    background: linear-gradient(135deg, ${C.primary}, ${C.purple});
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero-subtitle {
+    font-size: 1.1rem;
+    color: ${C.muted};
+    margin-bottom: 2.5rem;
+    line-height: 1.7;
+    font-weight: 400;
+  }
+  .stat-chip {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.75rem 1.25rem;
+    background: ${C.surface};
+    border: 1.5px solid ${C.border};
+    border-radius: 12px;
+    gap: 2px;
+    min-width: 80px;
+  }
+  .stat-chip .num { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: ${C.primary}; line-height: 1; }
+  .stat-chip .lbl { font-size: 0.7rem; color: ${C.muted}; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .name-input-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: stretch;
+    margin-bottom: 0.75rem;
+  }
+  .name-input-row input { margin: 0; flex: 1; }
+  .name-input-row .set-btn {
+    background: ${C.text};
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 0 1.25rem;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: 'Space Grotesk', sans-serif;
+    transition: background 0.2s;
+  }
+  .name-input-row .set-btn:hover { background: #2D3748; }
+  .divider-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    color: ${C.muted};
+    font-size: 0.85rem;
+    margin: 0.25rem 0;
+  }
+  .divider-row::before, .divider-row::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: ${C.border};
+  }
+  .action-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+  .floating-tag {
+    position: absolute;
+    background: white;
+    border: 1.5px solid ${C.border};
+    border-radius: 10px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    white-space: nowrap;
+  }
 `;
 
 export default function HotTakeProtocol() {
@@ -271,6 +395,7 @@ export default function HotTakeProtocol() {
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
   const [envError, setEnvError] = useState("");
+  const [nameLocked, setNameLocked] = useState(false);
   
   const [playerName, setPlayerName] = useState("");
   const [playerAddress, setPlayerAddress] = useState("");
@@ -288,12 +413,23 @@ export default function HotTakeProtocol() {
     if (!CONTRACT_ADDRESS) {
       setEnvError("Missing contract address. Set NEXT_PUBLIC_CONTRACT_ADDRESS in .env.local");
     }
-    const stored = localStorage.getItem("htp_player_name");
-    if (stored) setPlayerName(stored);
+    const storedName = localStorage.getItem("htp_player_name");
+    if (storedName) {
+      setPlayerName(storedName);
+      setNameLocked(true);
+    }
+    // KEY FIX: Recreate account from stored private key, not from stored JSON object
     const account = getOrCreateAccount();
     setPlayerAddress(account.address);
     loadLeaderboard();
   }, []);
+
+  const lockName = () => {
+    if (playerName.trim()) {
+      localStorage.setItem("htp_player_name", playerName.trim());
+      setNameLocked(true);
+    }
+  };
 
   const loadLeaderboard = async () => {
     try {
@@ -331,8 +467,6 @@ export default function HotTakeProtocol() {
             clearInterval(interval);
             setPollInterval(null);
             setScreen("results");
-          } else if (room.status === "round_2" && screen === "game") {
-            setScreen("game");
           }
         }
       } catch (err) {
@@ -356,8 +490,9 @@ export default function HotTakeProtocol() {
     setLoading(true);
     setLoadingMessage("Creating room...");
     try {
-      localStorage.setItem("htp_player_name", playerName);
-      const code = await writeContractWithReturn("create_room", [playerAddress, playerName]);
+      localStorage.setItem("htp_player_name", playerName.trim());
+      // playerAddress is derived from the stored private key — always valid
+      const code = await writeContractWithReturn("create_room", [playerAddress, playerName.trim()]);
       setRoomCode(code);
       const raw = await readContract("get_room", [code]);
       if (raw) {
@@ -382,8 +517,8 @@ export default function HotTakeProtocol() {
     setLoading(true);
     setLoadingMessage("Creating Solo Arena...");
     try {
-      localStorage.setItem("htp_player_name", playerName);
-      const code = await writeContractWithReturn("create_solo_room", [playerAddress, playerName]);
+      localStorage.setItem("htp_player_name", playerName.trim());
+      const code = await writeContractWithReturn("create_solo_room", [playerAddress, playerName.trim()]);
       setRoomCode(code);
       const raw = await readContract("get_room", [code]);
       if (raw) {
@@ -408,8 +543,8 @@ export default function HotTakeProtocol() {
     setLoading(true);
     setLoadingMessage("Joining room...");
     try {
-      localStorage.setItem("htp_player_name", playerName);
-      await writeContract("join_room", [roomCode, playerAddress, playerName]);
+      localStorage.setItem("htp_player_name", playerName.trim());
+      await writeContract("join_room", [roomCode, playerAddress, playerName.trim()]);
       const raw = await readContract("get_room", [roomCode]);
       if (raw) {
         const room = JSON.parse(raw as string);
@@ -537,6 +672,9 @@ export default function HotTakeProtocol() {
     }
   };
 
+  // ============================================
+  // RENDER: LOADING OVERLAY
+  // ============================================
   const renderLoadingOverlay = () => {
     if (!loading) return null;
     return (
@@ -559,65 +697,156 @@ export default function HotTakeProtocol() {
     );
   };
 
+  // ============================================
+  // RENDER: LANDING — Redesigned Hero
+  // ============================================
   const renderLanding = () => (
-    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", padding: "2rem 1.5rem" }} className="fadeIn">
-      <div style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}>
-        <div style={{ textAlign: "center", marginBottom: "3rem" }}>
-          <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>🔥</div>
-          <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3.5rem", letterSpacing: "0.06em", lineHeight: 1.1, marginBottom: "1rem" }}>
-            HOT TAKE<br />PROTOCOL
-          </h1>
-          <p style={{ color: C.muted, fontSize: "1.1rem", marginBottom: "0.75rem" }}>
-            Debate. Argue. Win with AI.
-          </p>
-          <p style={{ color: C.muted, fontSize: "0.9rem" }}>
-            5-player debate game powered by GenLayer
-          </p>
-        </div>
+    <div style={{ minHeight: "100vh", background: C.bg }} className="fadeIn">
+      {/* Hero Section */}
+      <div style={{
+        background: "linear-gradient(160deg, #fff 0%, #FFF5F2 60%, #F5F7FA 100%)",
+        borderBottom: `1px solid ${C.border}`,
+        padding: "4rem 1.5rem 3rem",
+      }}>
+        <div style={{ maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
+          {/* Badge */}
+          <div className="hero-badge">
+            <span>🔥</span> Powered by GenLayer AI
+          </div>
 
-        <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "0.9rem" }}>YOUR NAME</div>
-          <input
-            type="text"
-            placeholder="Enter your name..."
-            value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createRoom()}
-            style={{ marginBottom: "1rem" }}
-          />
-          <div style={{ fontSize: "0.85rem", color: C.muted }}>
-            Your address: <code style={{ color: C.text, fontSize: "0.8rem" }}>{playerAddress.slice(0, 12)}...</code>
+          {/* Main title */}
+          <h1 className="hero-title">
+            DROP YOUR<br />
+            <span className="highlight">HOT TAKES</span><br />
+            WIN THE CROWD
+          </h1>
+
+          {/* Subtitle */}
+          <p className="hero-subtitle">
+            A 5-player debate game where AI judges your arguments.<br />
+            The spiciest take wins.
+          </p>
+
+          {/* Stats row */}
+          <div style={{ display: "flex", justifyContent: "center", gap: "0.75rem", marginBottom: "3rem", flexWrap: "wrap" }}>
+            <div className="stat-chip">
+              <span className="num">5</span>
+              <span className="lbl">Players</span>
+            </div>
+            <div className="stat-chip">
+              <span className="num">3</span>
+              <span className="lbl">Rounds</span>
+            </div>
+            <div className="stat-chip">
+              <span className="num">AI</span>
+              <span className="lbl">Judges</span>
+            </div>
+            <div className="stat-chip">
+              <span className="num">10m</span>
+              <span className="lbl">Game</span>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "2rem" }}>
-          <button className="btn-primary" onClick={createRoom} disabled={loading} style={{ width: "100%" }}>
-            🔥 Create Multiplayer Room
-          </button>
-          <button className="btn-secondary" onClick={createSoloRoom} disabled={loading} style={{ width: "100%" }}>
-            🤖 Solo Arena (vs AI Bots)
-          </button>
-          <div style={{ textAlign: "center", color: C.muted, fontSize: "0.85rem", padding: "0.5rem 0" }}>— or —</div>
+      {/* Action Section */}
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "2.5rem 1.5rem" }}>
+
+        {/* Name input */}
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <div style={{ fontWeight: 700, fontSize: "0.8rem", letterSpacing: "0.06em", textTransform: "uppercase", color: C.muted, marginBottom: "0.85rem" }}>
+            Your Player Name
+          </div>
+          <div className="name-input-row">
+            <input
+              type="text"
+              placeholder="Enter your name..."
+              value={playerName}
+              onChange={(e) => { setPlayerName(e.target.value); setNameLocked(false); }}
+              onKeyDown={(e) => e.key === "Enter" && lockName()}
+              disabled={nameLocked}
+              style={{ borderColor: nameLocked ? C.secondary : undefined }}
+            />
+            {nameLocked ? (
+              <button className="set-btn" style={{
+                background: C.secondary, color: C.text, border: "none", borderRadius: 12,
+                padding: "0 1.1rem", fontWeight: 700, fontSize: "0.85rem", cursor: "pointer",
+                fontFamily: "inherit", whiteSpace: "nowrap",
+              }} onClick={() => setNameLocked(false)}>✏️ Edit</button>
+            ) : (
+              <button className="set-btn" onClick={lockName}>Set →</button>
+            )}
+          </div>
+          {nameLocked && (
+            <div style={{ fontSize: "0.8rem", color: C.secondary, fontWeight: 600, marginTop: "0.4rem" }}>
+              ✓ Ready as <strong>{playerName}</strong>
+            </div>
+          )}
+        </div>
+
+        {/* Primary actions */}
+        <button
+          className="btn-primary"
+          onClick={createRoom}
+          disabled={loading || !playerName.trim()}
+          style={{ width: "100%", marginBottom: "0.75rem", padding: "1.1rem", fontSize: "1rem" }}
+        >
+          🔥 CREATE ROOM
+        </button>
+
+        {/* Join room */}
+        <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.75rem" }}>
           <input
             type="text"
-            placeholder="Enter room code..."
+            placeholder="Room code..."
             value={roomCode}
             onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
             onKeyDown={(e) => e.key === "Enter" && joinRoom()}
+            style={{ flex: 1, margin: 0 }}
           />
-          <button className="btn-outline" onClick={joinRoom} disabled={loading} style={{ width: "100%" }}>
-            Join Room
+          <button
+            className="btn-outline"
+            onClick={joinRoom}
+            disabled={loading || !playerName.trim() || !roomCode.trim()}
+            style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}
+          >
+            JOIN
           </button>
         </div>
 
-        <div style={{ display: "flex", gap: "0.75rem" }}>
-          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ flex: 1 }}>📊 My Stats</button>
-          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ flex: 1 }}>🏆 Leaderboard</button>
+        <div className="divider-row">or play solo</div>
+
+        {/* Solo Arena */}
+        <button
+          className="btn-secondary"
+          onClick={createSoloRoom}
+          disabled={loading || !playerName.trim()}
+          style={{ width: "100%", marginBottom: "1.75rem", padding: "1rem" }}
+        >
+          🤖 SOLO ARENA — Play vs AI Bots
+        </button>
+
+        {/* Stats / Leaderboard */}
+        <div className="action-grid">
+          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ textAlign: "center", padding: "0.85rem" }}>
+            📊 My Stats
+          </button>
+          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ textAlign: "center", padding: "0.85rem" }}>
+            🏆 Leaderboard
+          </button>
+        </div>
+
+        {/* Address hint */}
+        <div style={{ marginTop: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.78rem" }}>
+          Your ID: <code style={{ color: C.text }}>{playerAddress ? playerAddress.slice(0, 14) + "..." : "—"}</code>
         </div>
       </div>
     </div>
   );
 
+  // ============================================
+  // RENDER: LOBBY
+  // ============================================
   const renderLobby = () => {
     if (!currentRoom) return null;
     const isHost = currentRoom.host === playerAddress;
@@ -689,21 +918,11 @@ export default function HotTakeProtocol() {
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
             {isHost ? (
-              <button
-                className="btn-primary"
-                onClick={startGame}
-                disabled={!canStart || loading}
-                style={{ flex: 1 }}
-              >
+              <button className="btn-primary" onClick={startGame} disabled={!canStart || loading} style={{ flex: 1 }}>
                 {canStart ? "🚀 Start Game" : `Need ${isSolo ? 1 : 3}+ players`}
               </button>
             ) : (
-              <button
-                className="btn-outline"
-                onClick={toggleReady}
-                disabled={loading || isSolo}
-                style={{ flex: 1 }}
-              >
+              <button className="btn-outline" onClick={toggleReady} disabled={loading || isSolo} style={{ flex: 1 }}>
                 {myPlayer?.ready ? "❌ Not Ready" : "✓ Ready Up"}
               </button>
             )}
@@ -726,6 +945,9 @@ export default function HotTakeProtocol() {
     );
   };
 
+  // ============================================
+  // RENDER: GAME
+  // ============================================
   const renderGame = () => {
     if (!currentRoom) return null;
     const mySubmission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(playerAddress));
@@ -801,7 +1023,6 @@ export default function HotTakeProtocol() {
                           </div>
                         ))}
                       </div>
-
                       <div style={{ fontWeight: 700, marginBottom: "0.75rem", fontSize: "1rem" }}>Your Take (100 chars max)</div>
                       <textarea
                         placeholder="Write your hot take..."
@@ -858,9 +1079,7 @@ export default function HotTakeProtocol() {
                           onClick={() => {
                             if (Object.keys(votes).length >= 3 && !isVoted) return;
                             const newVotes = { ...votes };
-                            const voteKeys = Object.keys(newVotes);
-                            const existingKey = voteKeys.find(k => newVotes[k] === p.address);
-                            
+                            const existingKey = Object.keys(newVotes).find(k => newVotes[k] === p.address);
                             if (existingKey) {
                               delete newVotes[existingKey];
                             } else {
@@ -882,15 +1101,7 @@ export default function HotTakeProtocol() {
                               <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.name}</div>
                               <div style={{ fontSize: "0.78rem", color: C.muted }}>{scenario?.title}</div>
                             </div>
-                            <div
-                              className={`stance-${data.stance}`}
-                              style={{
-                                padding: "0.4rem 0.75rem",
-                                borderRadius: 8,
-                                fontSize: "0.75rem",
-                                fontWeight: 700,
-                              }}
-                            >
+                            <div className={`stance-${data.stance}`} style={{ padding: "0.4rem 0.75rem", borderRadius: 8, fontSize: "0.75rem", fontWeight: 700 }}>
                               {data.stance === "genius" ? "🔥" : data.stance === "trash" ? "🗑️" : "😈"}
                             </div>
                           </div>
@@ -902,11 +1113,9 @@ export default function HotTakeProtocol() {
                     })}
                 </div>
               </div>
-
               <div style={{ marginBottom: "1rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>
                 {Object.keys(votes).length}/3 votes cast
               </div>
-
               <button
                 className="btn-primary"
                 onClick={submitVotes}
@@ -922,9 +1131,12 @@ export default function HotTakeProtocol() {
     );
   };
 
+  // ============================================
+  // RENDER: RESULTS
+  // ============================================
   const renderResults = () => {
     if (!currentRoom || !currentRoom.results) return null;
-    const { final_scores, ai_rankings, player_votes } = currentRoom.results;
+    const { final_scores, ai_rankings } = currentRoom.results;
     const sortedScores = Object.entries(final_scores || {})
       .map(([addr, data]: [string, any]) => ({ address: addr, ...data }))
       .sort((a: any, b: any) => b.total - a.total);
@@ -947,18 +1159,15 @@ export default function HotTakeProtocol() {
               {sortedScores.map((score: any, i: number) => {
                 const medals = ["🥇", "🥈", "🥉"];
                 return (
-                  <div
-                    key={score.address}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "1rem 1.25rem",
-                      borderRadius: 12,
-                      background: score.address === playerAddress ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg,
-                      border: `2px solid ${score.address === playerAddress ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
-                    }}
-                  >
+                  <div key={score.address} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "1rem 1.25rem",
+                    borderRadius: 12,
+                    background: score.address === playerAddress ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg,
+                    border: `2px solid ${score.address === playerAddress ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
+                  }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
                       <div style={{ fontSize: "1.5rem", minWidth: 32 }}>{medals[i] || `${i + 1}.`}</div>
                       <div>
@@ -994,14 +1203,7 @@ export default function HotTakeProtocol() {
                     {Array.isArray(rankings) && rankings.map((rank: any) => {
                       const pName = currentRoom.players.find(p => p.address === rank.player)?.name || rank.player?.slice(0, 8) + "...";
                       return (
-                        <div key={rank.player} style={{
-                          display: "flex",
-                          gap: "0.75rem",
-                          padding: "0.75rem 0.85rem",
-                          background: C.bg,
-                          borderRadius: 8,
-                          marginBottom: "0.5rem",
-                        }}>
+                        <div key={rank.player} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 0.85rem", background: C.bg, borderRadius: 8, marginBottom: "0.5rem" }}>
                           <div style={{ color: rank.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24, fontSize: "0.9rem" }}>
                             #{rank.rank}
                           </div>
@@ -1033,6 +1235,9 @@ export default function HotTakeProtocol() {
     );
   };
 
+  // ============================================
+  // RENDER: STATS
+  // ============================================
   const renderStats = () => {
     const [myStats, setMyStats] = useState<any>(null);
     const [statsLoading, setStatsLoading] = useState(true);
@@ -1052,7 +1257,6 @@ export default function HotTakeProtocol() {
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>MY STATS</div>
             <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
           </div>
-
           {statsLoading ? (
             <div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}>
               <div className="spin" style={{ fontSize: "2.5rem" }}>🔥</div>
@@ -1069,18 +1273,14 @@ export default function HotTakeProtocol() {
                 ].map(stat => (
                   <div key={stat.label} className="card" style={{ textAlign: "center" }}>
                     <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{stat.icon}</div>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>
-                      {stat.value}
-                    </div>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>{stat.value}</div>
                     <div style={{ color: C.muted, fontSize: "0.85rem" }}>{stat.label}</div>
                   </div>
                 ))}
               </div>
               {myStats.best_performance && (
                 <div className="card" style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}>
-                  <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>
-                    🏅 Best Performance
-                  </div>
+                  <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>🏅 Best Performance</div>
                   <div style={{ color: C.muted, fontSize: "0.9rem" }}>
                     Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}
                   </div>
@@ -1098,21 +1298,19 @@ export default function HotTakeProtocol() {
     );
   };
 
+  // ============================================
+  // RENDER: LEADERBOARD
+  // ============================================
   const renderLeaderboard = () => (
     <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
       <div style={{ maxWidth: 680, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🏆 LEADERBOARD</div>
           <div style={{ display: "flex", gap: "0.65rem" }}>
-            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>
-              ↻ Refresh
-            </button>
-            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>
-              ← Back
-            </button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>↻ Refresh</button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
           </div>
         </div>
-
         {leaderboard.length === 0 ? (
           <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}>
             <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🏆</div>
@@ -1141,9 +1339,7 @@ export default function HotTakeProtocol() {
                           {entry.address.slice(0, 10)}...
                           {isMe && <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.78rem" }}> (you)</span>}
                         </div>
-                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>
-                          {entry.games_played} games · {entry.wins} wins
-                        </div>
+                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>{entry.games_played} games · {entry.wins} wins</div>
                       </div>
                     </div>
                     <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", color: i === 0 ? C.gold : C.text }}>
@@ -1159,6 +1355,9 @@ export default function HotTakeProtocol() {
     </div>
   );
 
+  // ============================================
+  // ROUTER
+  // ============================================
   const renderScreen = () => {
     if (envError) return (
       <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }}>
