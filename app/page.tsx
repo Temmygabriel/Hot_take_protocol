@@ -966,7 +966,7 @@ export default function HotTakeProtocol() {
                           {score.player_name}
                           {score.address === playerAddress && <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>}
                         </div>
-                        <div style={{ fontSize: "0.78rem", color: C.muted" }}>
+                        <div style={{ fontSize: "0.78rem", color: C.muted }}>
                           AI: {score.ai_points}pts · Votes: +{score.vote_bonus}
                         </div>
                       </div>
