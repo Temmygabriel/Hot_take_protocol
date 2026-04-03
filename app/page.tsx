@@ -8,7 +8,7 @@ import { TransactionStatus } from "genlayer-js/types";
 // ============================================
 // TYPES
 // ============================================
-type Screen = "landing" | "lobby" | "game" | "results" | "stats" | "leaderboard";
+type Screen = "landing" | "lobby" | "game" | "results" | "stats" | "leaderboard" | "lookup";
 type GamePhase = "lobby" | "round_1" | "round_2" | "completed";
 
 interface Player {
@@ -32,26 +32,23 @@ interface Room {
   status: GamePhase;
   scenarios: Scenario[];
   submissions: Record<string, any>;
-  votes: Record<string, string>;
+  votes: Record<string, any>;
   results: any;
   current_round: number;
   solo_mode?: boolean;
+  bots_ready?: boolean; // v0.3: bots generated in separate tx
 }
 
 // ============================================
-// CONTRACT HELPERS — no private key, no signing, no address needed
-// Uses studionet pattern from POH working page
+// CONTRACT HELPERS
 // ============================================
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
 const MAX_ATTEMPTS = 3;
 
-// Single session account — persisted for the lifetime of the page
 let sessionAccount: ReturnType<typeof createAccount> | null = null;
 
 function getSessionAccount() {
-  if (!sessionAccount) {
-    sessionAccount = createAccount();
-  }
+  if (!sessionAccount) sessionAccount = createAccount();
   return sessionAccount;
 }
 
@@ -63,14 +60,9 @@ function makeClient() {
 
 async function readContract(functionName: string, args: any[]): Promise<any> {
   const { client } = makeClient();
-  return await client.readContract({
-    address: CONTRACT_ADDRESS,
-    functionName,
-    args,
-  });
+  return await client.readContract({ address: CONTRACT_ADDRESS, functionName, args });
 }
 
-// Standard write — no return value needed
 async function writeContract(functionName: string, args: any[]): Promise<boolean> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -85,14 +77,14 @@ async function writeContract(functionName: string, args: any[]): Promise<boolean
       await client.waitForTransactionReceipt({
         hash,
         status: TransactionStatus.ACCEPTED,
-        retries: 100,
+        retries: 120,
         interval: 4000,
       });
       return true;
     } catch (err: any) {
       console.error(`writeContract ${functionName} attempt ${attempt} failed:`, err?.message);
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, attempt * 4000));
+        await new Promise((r) => setTimeout(r, attempt * 5000));
         continue;
       }
       throw err;
@@ -101,13 +93,10 @@ async function writeContract(functionName: string, args: any[]): Promise<boolean
   return false;
 }
 
-// Write that captures a return value — uses simulate first, then executes
-// Required for: create_room, create_solo_room (return room code string)
 async function writeContractWithReturn(functionName: string, args: any[]): Promise<string> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const { client } = makeClient();
-      console.log(`writeContractWithReturn attempt ${attempt}/${MAX_ATTEMPTS}: ${functionName}`);
       const returnValue = await client.simulateWriteContract({
         address: CONTRACT_ADDRESS,
         functionName,
@@ -122,14 +111,14 @@ async function writeContractWithReturn(functionName: string, args: any[]): Promi
       await client.waitForTransactionReceipt({
         hash,
         status: TransactionStatus.ACCEPTED,
-        retries: 100,
+        retries: 120,
         interval: 4000,
       });
       return returnValue as string;
     } catch (err: any) {
       console.error(`writeContractWithReturn ${functionName} attempt ${attempt} failed:`, err?.message);
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, attempt * 4000));
+        await new Promise((r) => setTimeout(r, attempt * 5000));
         continue;
       }
       throw err;
@@ -139,7 +128,15 @@ async function writeContractWithReturn(functionName: string, args: any[]): Promi
 }
 
 // ============================================
-// NEON PLAYGROUND COLORS
+// HELPERS
+// ============================================
+function allVotesIn(room: Room): boolean {
+  const humanPlayers = room.players.filter((p) => !p.address.startsWith("bot_"));
+  return humanPlayers.length > 0 && humanPlayers.every((p) => room.votes[p.address]);
+}
+
+// ============================================
+// COLORS
 // ============================================
 const C = {
   bg: "#F5F7FA",
@@ -157,6 +154,21 @@ const C = {
   shadowHover: "0 4px 16px rgba(0,0,0,0.12)",
 };
 
+const AI_TIPS = [
+  "⚡ GenLayer validators are reading your takes...",
+  "🤖 Multiple AI models are reaching consensus...",
+  "🧠 Arguments are being scored for persuasiveness...",
+  "⚖️ Creativity and clarity are being evaluated...",
+  "🔥 The hotter the take, the longer it simmers...",
+  "📡 Optimistic Democracy is finalizing the verdict...",
+  "🌐 5 AI validators must agree before results unlock...",
+  "🎯 Ranking takes from spiciest to mildest...",
+  "💬 AI judges are debating your arguments right now...",
+];
+
+// ============================================
+// CSS
+// ============================================
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Bebas+Neue&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -166,88 +178,50 @@ const css = `
   ::-webkit-scrollbar-track { background: ${C.bg}; }
   ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: ${C.muted}; }
-  
-  input, textarea { 
-    background: ${C.surface}; 
-    color: ${C.text}; 
-    border: 2px solid ${C.border}; 
-    border-radius: 12px; 
-    padding: 0.9rem 1.1rem; 
-    font-family: 'Space Grotesk', sans-serif; 
-    font-size: 1rem; 
-    outline: none; 
-    transition: all 0.2s; 
-    width: 100%; 
+
+  input, textarea {
+    background: ${C.surface}; color: ${C.text};
+    border: 2px solid ${C.border}; border-radius: 12px;
+    padding: 0.9rem 1.1rem; font-family: 'Space Grotesk', sans-serif;
+    font-size: 1rem; outline: none; transition: all 0.2s; width: 100%;
   }
   input:focus, textarea:focus { border-color: ${C.primary}; box-shadow: 0 0 0 3px ${C.primary}20; }
   textarea { resize: vertical; min-height: 100px; }
 
-  .card { 
-    background: ${C.card}; 
-    border: 1.5px solid ${C.border}; 
-    border-radius: 16px; 
-    padding: 1.75rem; 
-    box-shadow: ${C.shadow}; 
-    transition: all 0.3s ease;
+  .card {
+    background: ${C.card}; border: 1.5px solid ${C.border};
+    border-radius: 16px; padding: 1.75rem;
+    box-shadow: ${C.shadow}; transition: all 0.3s ease;
   }
   .card:hover { box-shadow: ${C.shadowHover}; }
 
-  .btn-primary { 
-    background: linear-gradient(135deg, ${C.primary}, ${C.fire}); 
-    color: white; 
-    border: none; 
-    border-radius: 12px; 
-    padding: 0.95rem 1.75rem; 
-    font-weight: 700; 
-    font-size: 1rem; 
-    cursor: pointer; 
-    transition: all 0.2s; 
-    box-shadow: ${C.shadow};
+  .btn-primary {
+    background: linear-gradient(135deg, ${C.primary}, ${C.fire});
+    color: white; border: none; border-radius: 12px;
+    padding: 0.95rem 1.75rem; font-weight: 700; font-size: 1rem;
+    cursor: pointer; transition: all 0.2s; box-shadow: ${C.shadow};
     font-family: 'Space Grotesk', sans-serif;
   }
-  .btn-primary:hover:not(:disabled) { 
-    transform: translateY(-2px); 
-    box-shadow: ${C.shadowHover}; 
-  }
+  .btn-primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: ${C.shadowHover}; }
   .btn-primary:active:not(:disabled) { transform: translateY(0); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .btn-outline { 
-    background: transparent; 
-    color: ${C.text}; 
-    border: 2px solid ${C.border}; 
-    border-radius: 12px; 
-    padding: 0.9rem 1.5rem; 
-    font-weight: 600; 
-    font-size: 1rem; 
-    cursor: pointer; 
-    transition: all 0.2s;
-    font-family: 'Space Grotesk', sans-serif;
+  .btn-outline {
+    background: transparent; color: ${C.text};
+    border: 2px solid ${C.border}; border-radius: 12px;
+    padding: 0.9rem 1.5rem; font-weight: 600; font-size: 1rem;
+    cursor: pointer; transition: all 0.2s; font-family: 'Space Grotesk', sans-serif;
   }
-  .btn-outline:hover:not(:disabled) { 
-    border-color: ${C.primary}; 
-    color: ${C.primary}; 
-    background: ${C.primary}08; 
-  }
+  .btn-outline:hover:not(:disabled) { border-color: ${C.primary}; color: ${C.primary}; background: ${C.primary}08; }
   .btn-outline:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .btn-secondary {
-    background: ${C.secondary};
-    color: #1A202C;
-    border: none;
-    border-radius: 12px;
-    padding: 0.95rem 1.75rem;
-    font-weight: 700;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: ${C.shadow};
+    background: ${C.secondary}; color: #1A202C; border: none; border-radius: 12px;
+    padding: 0.95rem 1.75rem; font-weight: 700; font-size: 1rem;
+    cursor: pointer; transition: all 0.2s; box-shadow: ${C.shadow};
     font-family: 'Space Grotesk', sans-serif;
   }
-  .btn-secondary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: ${C.shadowHover};
-  }
+  .btn-secondary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: ${C.shadowHover}; }
   .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .stance-genius { background: linear-gradient(135deg, ${C.gold}, ${C.fire}); color: #1A202C; }
@@ -256,113 +230,91 @@ const css = `
 
   .fadeIn { animation: fadeIn 0.4s ease-in; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
   .pulse { animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-
-  .spin { animation: spin 1s linear infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .spin { animation: spin 1s linear infinite; display: inline-block; }
   @keyframes spin { to { transform: rotate(360deg); } }
-
   .slide-up { animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
   @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 
   .hero-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: ${C.primary}12;
-    border: 1px solid ${C.primary}30;
-    border-radius: 100px;
-    padding: 6px 16px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: ${C.primary};
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    margin-bottom: 1.5rem;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: ${C.primary}12; border: 1px solid ${C.primary}30;
+    border-radius: 100px; padding: 6px 16px; font-size: 0.78rem;
+    font-weight: 600; color: ${C.primary}; letter-spacing: 0.04em;
+    text-transform: uppercase; margin-bottom: 1.5rem;
   }
   .hero-title {
     font-family: 'Bebas Neue', sans-serif;
     font-size: clamp(3.5rem, 10vw, 6rem);
-    line-height: 0.92;
-    letter-spacing: -0.01em;
-    color: ${C.text};
-    margin-bottom: 1.5rem;
+    line-height: 0.92; letter-spacing: -0.01em; color: ${C.text}; margin-bottom: 1.5rem;
   }
   .hero-title .highlight {
     background: linear-gradient(135deg, ${C.primary}, ${C.purple});
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
-  .hero-subtitle {
-    font-size: 1.1rem;
-    color: ${C.muted};
-    margin-bottom: 2.5rem;
-    line-height: 1.7;
-    font-weight: 400;
-  }
+  .hero-subtitle { font-size: 1.1rem; color: ${C.muted}; margin-bottom: 2.5rem; line-height: 1.7; }
   .stat-chip {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0.75rem 1.25rem;
-    background: ${C.surface};
-    border: 1.5px solid ${C.border};
-    border-radius: 12px;
-    gap: 2px;
-    min-width: 80px;
+    display: inline-flex; flex-direction: column; align-items: center;
+    padding: 0.75rem 1.25rem; background: ${C.surface};
+    border: 1.5px solid ${C.border}; border-radius: 12px; gap: 2px; min-width: 80px;
   }
   .stat-chip .num { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: ${C.primary}; line-height: 1; }
   .stat-chip .lbl { font-size: 0.7rem; color: ${C.muted}; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-  .name-input-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: stretch;
-    margin-bottom: 0.75rem;
-  }
+  .name-input-row { display: flex; gap: 0.75rem; align-items: stretch; margin-bottom: 0.75rem; }
   .name-input-row input { margin: 0; flex: 1; }
   .set-btn {
-    background: ${C.text};
-    color: white;
-    border: none;
-    border-radius: 12px;
-    padding: 0 1.25rem;
-    font-weight: 700;
-    font-size: 0.9rem;
-    cursor: pointer;
-    white-space: nowrap;
-    font-family: 'Space Grotesk', sans-serif;
-    transition: background 0.2s;
+    background: ${C.text}; color: white; border: none; border-radius: 12px;
+    padding: 0 1.25rem; font-weight: 700; font-size: 0.9rem;
+    cursor: pointer; white-space: nowrap; font-family: 'Space Grotesk', sans-serif; transition: background 0.2s;
   }
   .set-btn:hover { background: #2D3748; }
   .divider-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    color: ${C.muted};
-    font-size: 0.85rem;
-    margin: 0.25rem 0;
+    display: flex; align-items: center; gap: 1rem;
+    color: ${C.muted}; font-size: 0.85rem; margin: 0.25rem 0;
   }
-  .divider-row::before, .divider-row::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: ${C.border};
+  .divider-row::before, .divider-row::after { content: ''; flex: 1; height: 1px; background: ${C.border}; }
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 0.75rem; }
+
+  .ai-dots span {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: ${C.purple}; margin: 0 3px;
+    animation: dotBounce 1.2s infinite;
   }
-  .action-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
+  .ai-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .ai-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dotBounce { 0%,80%,100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1.2); opacity: 1; } }
+
+  .voted-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: ${C.secondary}20; border: 1px solid ${C.secondary}40;
+    color: #00a65a; border-radius: 8px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700;
   }
+  .pending-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: ${C.muted}15; border: 1px solid ${C.border};
+    color: ${C.muted}; border-radius: 8px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600;
+  }
+  .bots-loading-bar {
+    height: 4px; border-radius: 2px; background: ${C.border};
+    overflow: hidden; margin-top: 0.5rem;
+  }
+  .bots-loading-bar-fill {
+    height: 100%; background: linear-gradient(90deg, ${C.purple}, ${C.primary});
+    animation: barSlide 2s ease-in-out infinite;
+  }
+  @keyframes barSlide { 0% { width: 0%; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0%; margin-left: 100%; } }
 `;
 
+// ============================================
+// MAIN COMPONENT
+// ============================================
 export default function HotTakeProtocol() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
   const [nameLocked, setNameLocked] = useState(false);
+  const [tipIdx, setTipIdx] = useState(0);
 
   const [playerName, setPlayerName] = useState("");
   const [playerAddress, setPlayerAddress] = useState("");
@@ -370,41 +322,51 @@ export default function HotTakeProtocol() {
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
 
+  // Lookup screen state
+  const [lookupCode, setLookupCode] = useState("");
+  const [lookupRoom, setLookupRoom] = useState<Room | null>(null);
+  const [lookupError, setLookupError] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+
+  // Game state
   const [selectedScenario, setSelectedScenario] = useState<number | null>(null);
   const [selectedStance, setSelectedStance] = useState<string>("");
   const [takeText, setTakeText] = useState("");
   const [votes, setVotes] = useState<Record<string, string>>({});
 
-  // ─────────────────────────────────────────────────────────
-  // KEY FIX: Use a ref to track screen so the polling callback
-  // always reads the CURRENT screen — not a stale closure value.
-  // Without this, every client on the site jumps screens whenever
-  // ANY room transitions, because all polling callbacks share a
-  // stale copy of `screen` from when the interval was created.
-  // ─────────────────────────────────────────────────────────
+  // Manual refresh fallback — for non-host players waiting on results
+  const [waitingForResults, setWaitingForResults] = useState(false);
+  const [manualRefreshRoom, setManualRefreshRoom] = useState<string>("");
+
+  // Refs to avoid stale closures in polling
   const screenRef = useRef<Screen>("landing");
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollRoomCodeRef = useRef<string>("");
+  const playerAddressRef = useRef<string>("");
+  // Prevents duplicate calculate_results calls — only host triggers it, once
+  const calculatingRef = useRef(false);
+  // Prevents duplicate generate_bot_takes calls
+  const generatingBotsRef = useRef(false);
 
-  // Keep screenRef in sync with screen state
+  useEffect(() => { screenRef.current = screen; }, [screen]);
+  useEffect(() => { playerAddressRef.current = playerAddress; }, [playerAddress]);
+
+  // Rotate tips while loading overlay is visible
   useEffect(() => {
-    screenRef.current = screen;
-  }, [screen]);
+    if (!loading) return;
+    const t = setInterval(() => setTipIdx((i) => (i + 1) % AI_TIPS.length), 3500);
+    return () => clearInterval(t);
+  }, [loading]);
 
-  // Get account on mount (never changes within a session)
   useEffect(() => {
     const { account } = makeClient();
     setPlayerAddress(account.address);
     loadLeaderboard();
   }, []);
 
-  // Restore name from localStorage (name only, never private key)
   useEffect(() => {
-    const storedName = localStorage.getItem("htp_player_name");
-    if (storedName) {
-      setPlayerName(storedName);
-      setNameLocked(true);
-    }
+    const n = localStorage.getItem("htp_player_name");
+    if (n) { setPlayerName(n); setNameLocked(true); }
   }, []);
 
   const lockName = () => {
@@ -417,21 +379,15 @@ export default function HotTakeProtocol() {
   const loadLeaderboard = async () => {
     try {
       const raw = await readContract("get_global_leaderboard", []);
-      if (raw) {
-        const data = JSON.parse(raw as string);
-        setLeaderboard(data);
-      }
-    } catch (err) {
-      console.error("Failed to load leaderboard:", err);
-    }
+      if (raw) setLeaderboard(JSON.parse(raw as string));
+    } catch { /* silent */ }
   };
 
   const stopPolling = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
     pollRoomCodeRef.current = "";
+    calculatingRef.current = false;
+    generatingBotsRef.current = false;
   }, []);
 
   const goHome = useCallback(() => {
@@ -443,42 +399,119 @@ export default function HotTakeProtocol() {
     setSelectedStance("");
     setTakeText("");
     setVotes({});
+    setWaitingForResults(false);
+    setManualRefreshRoom("");
   }, [stopPolling]);
 
   // ─────────────────────────────────────────────────────────
-  // KEY FIX: startPolling no longer depends on `screen` from
-  // closure. It reads screenRef.current (always fresh) and
-  // checks pollRoomCodeRef to ensure we only react to updates
-  // for OUR room — not any other room's state changes.
+  // POLLING ENGINE — v0.3 changes:
+  //
+  // 1. HOST ONLY triggers calculate_results (once, guarded by calculatingRef)
+  // 2. After submitting votes, non-hosts show a "waiting for AI" state with
+  //    a manual Refresh button in case they've been waiting too long
+  // 3. Solo mode: after start_game, automatically calls generate_bot_takes
+  //    as a background transaction. Shows "AI bots preparing..." inline.
+  // 4. Always fetches a fresh room before navigating to results.
   // ─────────────────────────────────────────────────────────
   const startPolling = useCallback((code: string) => {
     stopPolling();
     pollRoomCodeRef.current = code;
+    calculatingRef.current = false;
+    generatingBotsRef.current = false;
 
     const interval = setInterval(async () => {
-      // Safety: don't poll if we left this room
       if (pollRoomCodeRef.current !== code) return;
+      const cs = screenRef.current;
+      if (!["lobby", "game"].includes(cs)) return;
 
       try {
         const raw = await readContract("get_room", [code]);
-        if (!raw) return;
+        if (!raw || pollRoomCodeRef.current !== code) return;
         const room = JSON.parse(raw as string) as Room;
+        const myAddr = playerAddressRef.current;
+        const isHost = room.host === myAddr;
+        const isSolo = room.solo_mode === true;
 
-        // Only update state if we're still on a screen related to this room
-        const currentScreen = screenRef.current;
-        if (currentScreen !== "lobby" && currentScreen !== "game" && currentScreen !== "results") return;
-
-        setCurrentRoom(room);
-
-        if (room.status === "round_1" && currentScreen === "lobby") {
+        // Lobby → Game: host just started, scenarios generated
+        if (room.status === "round_1" && cs === "lobby") {
+          setCurrentRoom(room);
           setScreen("game");
-        } else if (room.status === "round_2" && currentScreen === "game") {
-          // Stay on game screen — just update room state (voting phase shows automatically)
-          setScreen("game");
-        } else if (room.status === "completed" && currentScreen !== "results") {
+          return;
+        }
+
+        // ── SOLO BOT TAKES: trigger generate_bot_takes once in background ──
+        // After start_game, bots_ready=false. The host (always = player in solo)
+        // fires generate_bot_takes. It's a separate AI tx so the game screen
+        // shows immediately while bots are loading.
+        if (isSolo && room.status === "round_1" && room.bots_ready === false && !generatingBotsRef.current) {
+          generatingBotsRef.current = true;
+          console.log("Triggering generate_bot_takes in background...");
+          try {
+            await writeContract("generate_bot_takes", [code]);
+            const freshRaw = await readContract("get_room", [code]);
+            if (freshRaw && pollRoomCodeRef.current === code) {
+              setCurrentRoom(JSON.parse(freshRaw as string));
+            }
+          } catch (err: any) {
+            console.error("generate_bot_takes failed:", err?.message);
+            generatingBotsRef.current = false; // allow retry
+          }
+          return;
+        }
+
+        // Round 1 → Round 2: all takes in, advance happened
+        if (room.status === "round_2" && cs === "game") {
+          setCurrentRoom(room);
+          return; // renderGame handles round_2 display
+        }
+
+        // All votes in — HOST triggers calculate_results once
+        if (room.status === "round_2" && allVotesIn(room) && isHost && !calculatingRef.current) {
+          calculatingRef.current = true;
+          setCurrentRoom(room);
+          setLoading(true);
+          setLoadingMessage("All votes in — AI judges are calculating results...");
+          try {
+            await writeContract("calculate_results", [code]);
+            const freshRaw = await readContract("get_room", [code]);
+            if (freshRaw) {
+              const freshRoom = JSON.parse(freshRaw as string);
+              setCurrentRoom(freshRoom);
+              stopPolling();
+              setScreen("results");
+            }
+          } catch (err: any) {
+            console.error("calculate_results failed:", err?.message);
+            calculatingRef.current = false; // allow retry next poll
+          } finally {
+            setLoading(false);
+            setLoadingMessage("");
+          }
+          return;
+        }
+
+        // Non-host: all votes in, waiting for host to calculate
+        // Show the manual refresh fallback UI after votes are all in
+        if (room.status === "round_2" && allVotesIn(room) && !isHost && !calculatingRef.current) {
+          setManualRefreshRoom(code);
+          setWaitingForResults(true);
+          setCurrentRoom(room);
+          return;
+        }
+
+        // Non-host: detect completed and navigate to results
+        if (room.status === "completed" && cs !== "results") {
+          const freshRaw = await readContract("get_room", [code]);
+          const finalRoom = freshRaw ? JSON.parse(freshRaw as string) : room;
+          setCurrentRoom(finalRoom);
+          setWaitingForResults(false);
           stopPolling();
           setScreen("results");
+          return;
         }
+
+        // Default: keep room state fresh
+        setCurrentRoom(room);
       } catch (err) {
         console.error("Poll error:", err);
       }
@@ -487,90 +520,76 @@ export default function HotTakeProtocol() {
     pollIntervalRef.current = interval;
   }, [stopPolling]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  // Manual refresh for non-host players stuck on waiting screen
+  const manualRefreshResults = async () => {
+    if (!manualRefreshRoom) return;
+    setLoading(true);
+    setLoadingMessage("Checking for results...");
+    try {
+      const raw = await readContract("get_room", [manualRefreshRoom]);
+      if (raw) {
+        const room = JSON.parse(raw as string) as Room;
+        if (room.status === "completed" && room.results?.final_scores) {
+          setCurrentRoom(room);
+          setWaitingForResults(false);
+          stopPolling();
+          setScreen("results");
+        } else {
+          // Still waiting — update room state
+          setCurrentRoom(room);
+        }
+      }
+    } catch (err: any) {
+      console.error("Manual refresh failed:", err?.message);
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+    }
+  };
 
   // ─────────────────────────────────────────────────────────
-  // ROOM ACTIONS
+  // ACTIONS
   // ─────────────────────────────────────────────────────────
 
   const createRoom = async () => {
-    if (!playerName.trim()) {
-      alert("Please enter your name first!");
-      return;
-    }
-    setLoading(true);
-    setLoadingMessage("Creating room...");
+    if (!playerName.trim()) { alert("Please enter your name first!"); return; }
+    setLoading(true); setLoadingMessage("Creating room...");
     try {
       localStorage.setItem("htp_player_name", playerName.trim());
       const code = await writeContractWithReturn("create_room", [playerAddress, playerName.trim()]);
       setRoomCode(code);
       const raw = await readContract("get_room", [code]);
-      if (raw) {
-        const room = JSON.parse(raw as string);
-        setCurrentRoom(room);
-        setScreen("lobby");
-        startPolling(code);
-      }
-    } catch (err: any) {
-      alert(`Failed to create room: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+      if (raw) { setCurrentRoom(JSON.parse(raw as string)); setScreen("lobby"); startPolling(code); }
+    } catch (err: any) { alert(`Failed to create room: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
   };
 
   const createSoloRoom = async () => {
-    if (!playerName.trim()) {
-      alert("Please enter your name first!");
-      return;
-    }
-    setLoading(true);
-    setLoadingMessage("Creating Solo Arena...");
+    if (!playerName.trim()) { alert("Please enter your name first!"); return; }
+    setLoading(true); setLoadingMessage("Creating Solo Arena...");
     try {
       localStorage.setItem("htp_player_name", playerName.trim());
       const code = await writeContractWithReturn("create_solo_room", [playerAddress, playerName.trim()]);
       setRoomCode(code);
       const raw = await readContract("get_room", [code]);
-      if (raw) {
-        const room = JSON.parse(raw as string);
-        setCurrentRoom(room);
-        setScreen("lobby");
-        startPolling(code);
-      }
-    } catch (err: any) {
-      alert(`Failed to create solo room: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+      if (raw) { setCurrentRoom(JSON.parse(raw as string)); setScreen("lobby"); startPolling(code); }
+    } catch (err: any) { alert(`Failed to create solo room: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
   };
 
   const joinRoom = async () => {
-    if (!playerName.trim() || !roomCode.trim()) {
-      alert("Please enter your name and room code!");
-      return;
-    }
-    setLoading(true);
-    setLoadingMessage("Joining room...");
+    if (!playerName.trim() || !roomCode.trim()) { alert("Please enter your name and room code!"); return; }
+    setLoading(true); setLoadingMessage("Joining room...");
     try {
       localStorage.setItem("htp_player_name", playerName.trim());
-      await writeContract("join_room", [roomCode.trim(), playerAddress, playerName.trim()]);
-      const raw = await readContract("get_room", [roomCode.trim()]);
-      if (raw) {
-        const room = JSON.parse(raw as string);
-        setCurrentRoom(room);
-        setScreen("lobby");
-        startPolling(roomCode.trim());
-      }
-    } catch (err: any) {
-      alert(`Failed to join room: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+      const code = roomCode.trim().toUpperCase();
+      await writeContract("join_room", [code, playerAddress, playerName.trim()]);
+      const raw = await readContract("get_room", [code]);
+      if (raw) { setCurrentRoom(JSON.parse(raw as string)); setScreen("lobby"); startPolling(code); }
+    } catch (err: any) { alert(`Failed to join room: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
   };
 
   const toggleReady = async () => {
@@ -580,44 +599,30 @@ export default function HotTakeProtocol() {
       await writeContract("toggle_ready", [currentRoom.room_code, playerAddress]);
       const raw = await readContract("get_room", [currentRoom.room_code]);
       if (raw) setCurrentRoom(JSON.parse(raw as string));
-    } catch (err: any) {
-      alert(`Failed to toggle ready: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err: any) { alert(`Failed: ${err.message}`); }
+    finally { setLoading(false); }
   };
 
-  // ─────────────────────────────────────────────────────────
-  // KEY FIX: startGame uses writeContract (not writeContractWithReturn)
-  // but with a longer loading message since start_game calls AI
-  // to generate scenarios (and bot takes in solo mode) — this
-  // takes ~60s. We just wait it out with the spinner showing.
-  // After it completes we read the room and navigate to game screen
-  // directly rather than waiting for the poll to do it — that way
-  // this player transitions immediately, but OTHER players (who are
-  // also polling) will transition via their own poll when they see
-  // room.status === "round_1". No global screen jumping.
-  // ─────────────────────────────────────────────────────────
   const startGame = async () => {
     if (!currentRoom) return;
+    const isSolo = currentRoom.solo_mode === true;
     setLoading(true);
-    setLoadingMessage("Starting game — AI is generating scenarios...");
+    setLoadingMessage(
+      isSolo
+        ? "Generating AI debate scenarios... (~30-60s) — bot takes load after"
+        : "Generating debate scenarios with AI... (~30-60s)"
+    );
     try {
       await writeContract("start_game", [currentRoom.room_code, playerAddress]);
       const raw = await readContract("get_room", [currentRoom.room_code]);
       if (raw) {
         const room = JSON.parse(raw as string);
         setCurrentRoom(room);
-        if (room.status === "round_1") {
-          setScreen("game");
-        }
+        if (room.status === "round_1") setScreen("game");
+        // In solo mode, generate_bot_takes fires automatically from the polling loop
       }
-    } catch (err: any) {
-      alert(`Failed to start game: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+    } catch (err: any) { alert(`Failed to start game: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
   };
 
   const submitTake = async () => {
@@ -625,86 +630,72 @@ export default function HotTakeProtocol() {
       alert("Please select a scenario, stance, and write your take!");
       return;
     }
-    setLoading(true);
-    setLoadingMessage("Submitting your hot take...");
+    setLoading(true); setLoadingMessage("Submitting your hot take...");
     try {
       await writeContract("submit_take", [
-        currentRoom.room_code,
-        playerAddress,
-        selectedScenario,
-        selectedStance,
-        takeText.trim(),
+        currentRoom.room_code, playerAddress, selectedScenario, selectedStance, takeText.trim(),
       ]);
       const raw = await readContract("get_room", [currentRoom.room_code]);
       if (raw) {
         const room = JSON.parse(raw as string) as Room;
         setCurrentRoom(room);
-
-        // Check if all human players (and bots already submitted at start_game)
-        // have submitted — if so, advance to voting
+        // If all players submitted → advance to voting
         const allSubmitted = room.players.every((p: Player) =>
           Object.keys(room.submissions).some((key) => key.startsWith(p.address))
         );
-        if (allSubmitted) {
-          setLoadingMessage("All takes in — moving to voting...");
+        if (allSubmitted && room.status === "round_1") {
+          setLoadingMessage("All takes in — advancing to voting...");
           await writeContract("advance_to_voting", [currentRoom.room_code]);
           const updatedRaw = await readContract("get_room", [currentRoom.room_code]);
           if (updatedRaw) setCurrentRoom(JSON.parse(updatedRaw as string));
         }
       }
-    } catch (err: any) {
-      alert(`Failed to submit take: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+    } catch (err: any) { alert(`Failed to submit take: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
   };
 
+  // ─────────────────────────────────────────────────────────
+  // SUBMIT VOTES — ONLY submits the vote. Does NOT call calculate_results.
+  //
+  // The polling loop handles calculate_results:
+  // - HOST fires it once when allVotesIn() is true (guarded by calculatingRef)
+  // - NON-HOSTS wait via polling and get a manual Refresh fallback button
+  // ─────────────────────────────────────────────────────────
   const submitVotes = async () => {
     if (!currentRoom) return;
-    setLoading(true);
-    setLoadingMessage("Submitting votes...");
+    if (Object.keys(votes).length === 0) { alert("Please vote for at least one take!"); return; }
+    setLoading(true); setLoadingMessage("Submitting your votes...");
     try {
-      const votesArray = Object.values(votes);
       await writeContract("submit_votes", [
-        currentRoom.room_code,
-        playerAddress,
-        JSON.stringify(votesArray),
+        currentRoom.room_code, playerAddress, JSON.stringify(Object.values(votes)),
       ]);
       const raw = await readContract("get_room", [currentRoom.room_code]);
-      if (raw) {
-        const room = JSON.parse(raw as string) as Room;
-        setCurrentRoom(room);
+      if (raw) setCurrentRoom(JSON.parse(raw as string));
+    } catch (err: any) { alert(`Failed to submit votes: ${err.message}`); }
+    finally { setLoading(false); setLoadingMessage(""); }
+  };
 
-        // Check if all human players have voted (bots auto-vote in contract)
-        const allVoted = room.players.every(
-          (p: Player) => p.address.startsWith("bot_") || room.votes[p.address]
-        );
-        if (allVoted) {
-          setLoadingMessage("Calculating results with AI judges...");
-          await writeContract("calculate_results", [currentRoom.room_code]);
-          const resultsRaw = await readContract("get_room", [currentRoom.room_code]);
-          if (resultsRaw) {
-            const resultsRoom = JSON.parse(resultsRaw as string);
-            setCurrentRoom(resultsRoom);
-            stopPolling();
-            setScreen("results");
-          }
-        }
-      }
-    } catch (err: any) {
-      alert(`Failed to submit votes: ${err.message}`);
-    } finally {
-      setLoading(false);
-      setLoadingMessage("");
-    }
+  const lookupGame = async () => {
+    if (!lookupCode.trim()) return;
+    setLookupLoading(true); setLookupError(""); setLookupRoom(null);
+    try {
+      const raw = await readContract("get_room", [lookupCode.trim().toUpperCase()]);
+      if (raw && raw !== "") setLookupRoom(JSON.parse(raw as string));
+      else setLookupError("Room not found. Check the code and try again.");
+    } catch { setLookupError("Room not found. Check the code and try again."); }
+    finally { setLookupLoading(false); }
+  };
+
+  const rejoinFromLookup = (room: Room) => {
+    setCurrentRoom(room);
+    setRoomCode(room.room_code);
+    if (room.status === "completed") { setScreen("results"); }
+    else if (["round_1", "round_2"].includes(room.status)) { setScreen("game"); startPolling(room.room_code); }
+    else { setScreen("lobby"); startPolling(room.room_code); }
   };
 
   const copyRoomCode = () => {
-    if (currentRoom) {
-      navigator.clipboard.writeText(currentRoom.room_code);
-      alert("Room code copied!");
-    }
+    if (currentRoom) { navigator.clipboard.writeText(currentRoom.room_code); alert("Room code copied!"); }
   };
 
   // ─────────────────────────────────────────────────────────
@@ -714,26 +705,59 @@ export default function HotTakeProtocol() {
   const renderLoadingOverlay = () => {
     if (!loading) return null;
     return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.6)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 9999,
-          backdropFilter: "blur(4px)",
-        }}
-      >
-        <div className="card" style={{ textAlign: "center", minWidth: 300 }}>
-          <div className="spin" style={{ fontSize: "3rem", marginBottom: "1rem" }}>
-            🔥
+      <div style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9999, backdropFilter: "blur(4px)",
+      }}>
+        <div className="card" style={{ textAlign: "center", minWidth: 320, maxWidth: 420 }}>
+          <div className="spin" style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔥</div>
+          <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.4rem" }}>{loadingMessage || "Loading..."}</div>
+          <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1.25rem" }}>Do not close this tab</div>
+          <div style={{
+            background: `${C.primary}08`, border: `1px solid ${C.primary}20`,
+            borderRadius: 10, padding: "0.75rem 1rem",
+            fontSize: "0.8rem", color: C.primary, fontStyle: "italic", transition: "all 0.3s",
+          }}>
+            {AI_TIPS[tipIdx]}
           </div>
-          <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.5rem" }}>
-            {loadingMessage || "Loading..."}
+        </div>
+      </div>
+    );
+  };
+
+  // ── WAITING FOR RESULTS overlay (non-host fallback) ──
+  const renderWaitingForResults = () => {
+    if (!waitingForResults) return null;
+    return (
+      <div style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9000, backdropFilter: "blur(4px)",
+      }}>
+        <div className="card" style={{ textAlign: "center", minWidth: 320, maxWidth: 420 }}>
+          <div style={{ border: `2px solid ${C.purple}30`, borderRadius: 12, padding: "1.5rem", marginBottom: "1.25rem" }}>
+            <div className="ai-dots" style={{ marginBottom: "1.25rem", display: "flex", justifyContent: "center" }}>
+              <span /><span /><span />
+            </div>
+            <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.5rem" }}>All votes are in!</div>
+            <div style={{ color: C.muted, fontSize: "0.85rem", marginBottom: "0.75rem" }}>
+              The host's AI judges are calculating final results. This takes 60–90 seconds on GenLayer studionet.
+            </div>
+            <div style={{ fontSize: "0.8rem", color: C.fire, fontStyle: "italic" }}>
+              {AI_TIPS[tipIdx]}
+            </div>
           </div>
-          <div style={{ color: C.muted, fontSize: "0.9rem" }}>Please wait...</div>
+          <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
+            This screen will update automatically. If it doesn't after a while, tap Refresh below.
+          </div>
+          <button className="btn-primary" onClick={manualRefreshResults} disabled={loading}
+            style={{ width: "100%", marginBottom: "0.65rem" }}>
+            🔄 Refresh Results
+          </button>
+          <button className="btn-outline" onClick={goHome} style={{ width: "100%", fontSize: "0.85rem", padding: "0.7rem" }}>
+            ← Back to Home
+          </button>
         </div>
       </div>
     );
@@ -741,172 +765,77 @@ export default function HotTakeProtocol() {
 
   const renderLanding = () => (
     <div style={{ minHeight: "100vh", background: C.bg }} className="fadeIn">
-      <div
-        style={{
-          background: "linear-gradient(160deg, #fff 0%, #FFF5F2 60%, #F5F7FA 100%)",
-          borderBottom: `1px solid ${C.border}`,
-          padding: "4rem 1.5rem 3rem",
-        }}
-      >
+      <div style={{
+        background: "linear-gradient(160deg, #fff 0%, #FFF5F2 60%, #F5F7FA 100%)",
+        borderBottom: `1px solid ${C.border}`, padding: "4rem 1.5rem 3rem",
+      }}>
         <div style={{ maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
-          <div className="hero-badge">
-            <span>🔥</span> Powered by GenLayer AI
-          </div>
-          {/* Updated hero copy — replaced "WIN THE CROWD" */}
+          <div className="hero-badge"><span>🔥</span> Powered by GenLayer AI</div>
           <h1 className="hero-title">
-            DROP YOUR
-            <br />
-            <span className="highlight">HOT TAKES</span>
-            <br />
+            DROP YOUR<br />
+            <span className="highlight">HOT TAKES</span><br />
             OWN THE ROOM
           </h1>
           <p className="hero-subtitle">
-            A 5-player debate game where AI judges your arguments.
-            <br />
+            A 5-player debate game where AI judges your arguments.<br />
             The spiciest take wins.
           </p>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "0.75rem",
-              marginBottom: "3rem",
-              flexWrap: "wrap",
-            }}
-          >
-            <div className="stat-chip">
-              <span className="num">5</span>
-              <span className="lbl">Players</span>
-            </div>
-            <div className="stat-chip">
-              <span className="num">3</span>
-              <span className="lbl">Rounds</span>
-            </div>
-            <div className="stat-chip">
-              <span className="num">AI</span>
-              <span className="lbl">Judges</span>
-            </div>
-            <div className="stat-chip">
-              {/* "10m" = 10-minute game — label updated to be clearer */}
-              <span className="num">10m</span>
-              <span className="lbl">Per Game</span>
-            </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: "0.75rem", marginBottom: "3rem", flexWrap: "wrap" }}>
+            {[["5","Players"],["3","Rounds"],["AI","Judges"],["10m","Per Game"]].map(([n,l]) => (
+              <div key={l} className="stat-chip"><span className="num">{n}</span><span className="lbl">{l}</span></div>
+            ))}
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "2.5rem 1.5rem" }}>
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "0.8rem",
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              color: C.muted,
-              marginBottom: "0.85rem",
-            }}
-          >
-            Your Player Name
-          </div>
+          <div style={{ fontWeight: 700, fontSize: "0.8rem", letterSpacing: "0.06em", textTransform: "uppercase", color: C.muted, marginBottom: "0.85rem" }}>Your Player Name</div>
           <div className="name-input-row">
-            <input
-              type="text"
-              placeholder="Enter your name..."
-              value={playerName}
-              onChange={(e) => {
-                setPlayerName(e.target.value);
-                setNameLocked(false);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && lockName()}
-              disabled={nameLocked}
-            />
-            {nameLocked ? (
-              <button
-                className="set-btn"
-                style={{ background: C.secondary, color: C.text }}
-                onClick={() => setNameLocked(false)}
-              >
-                ✏️ Edit
-              </button>
-            ) : (
-              <button className="set-btn" onClick={lockName}>
-                Set →
-              </button>
-            )}
+            <input type="text" placeholder="Enter your name..." value={playerName}
+              onChange={(e) => { setPlayerName(e.target.value); setNameLocked(false); }}
+              onKeyDown={(e) => e.key === "Enter" && lockName()} disabled={nameLocked} />
+            {nameLocked
+              ? <button className="set-btn" style={{ background: C.secondary, color: C.text }} onClick={() => setNameLocked(false)}>✏️ Edit</button>
+              : <button className="set-btn" onClick={lockName}>Set →</button>
+            }
           </div>
-          {nameLocked && (
-            <div
-              style={{ fontSize: "0.8rem", color: C.secondary, fontWeight: 600, marginTop: "0.4rem" }}
-            >
-              ✓ Ready as <strong>{playerName}</strong>
-            </div>
-          )}
+          {nameLocked && <div style={{ fontSize: "0.8rem", color: C.secondary, fontWeight: 600, marginTop: "0.4rem" }}>✓ Ready as <strong>{playerName}</strong></div>}
         </div>
 
-        <button
-          className="btn-primary"
-          onClick={createRoom}
-          disabled={loading || !playerName.trim()}
-          style={{ width: "100%", marginBottom: "0.75rem", padding: "1.1rem", fontSize: "1rem" }}
-        >
-          🔥 CREATE ROOM
+        <button className="btn-primary" onClick={createRoom} disabled={loading || !playerName.trim()}
+          style={{ width: "100%", marginBottom: "0.75rem", padding: "1.1rem" }}>
+          🔥 CREATE NEW ROOM
         </button>
 
         <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.75rem" }}>
-          <input
-            type="text"
-            placeholder="Room code..."
-            value={roomCode}
+          <input type="text" placeholder="Room code..." value={roomCode}
             onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-            onKeyDown={(e) => e.key === "Enter" && joinRoom()}
-            style={{ flex: 1, margin: 0 }}
-          />
-          <button
-            className="btn-outline"
-            onClick={joinRoom}
+            onKeyDown={(e) => e.key === "Enter" && joinRoom()} style={{ flex: 1, margin: 0 }} />
+          <button className="btn-outline" onClick={joinRoom}
             disabled={loading || !playerName.trim() || !roomCode.trim()}
-            style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}
-          >
-            JOIN
-          </button>
+            style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}>JOIN</button>
         </div>
 
         <div className="divider-row">or play solo</div>
 
-        <button
-          className="btn-secondary"
-          onClick={createSoloRoom}
-          disabled={loading || !playerName.trim()}
-          style={{ width: "100%", marginBottom: "1.75rem", padding: "1rem" }}
-        >
+        <button className="btn-secondary" onClick={createSoloRoom} disabled={loading || !playerName.trim()}
+          style={{ width: "100%", marginBottom: "1.75rem", padding: "1rem" }}>
           🤖 SOLO ARENA — Play vs AI Bots
         </button>
 
         <div className="action-grid">
-          <button
-            className="btn-outline"
-            onClick={() => setScreen("stats")}
-            style={{ textAlign: "center", padding: "0.85rem" }}
-          >
-            📊 My Stats
-          </button>
-          <button
-            className="btn-outline"
-            onClick={() => setScreen("leaderboard")}
-            style={{ textAlign: "center", padding: "0.85rem" }}
-          >
-            🏆 Leaderboard
-          </button>
+          <button className="btn-outline" onClick={() => setScreen("stats")} style={{ textAlign: "center", padding: "0.85rem" }}>📊 My Stats</button>
+          <button className="btn-outline" onClick={() => setScreen("leaderboard")} style={{ textAlign: "center", padding: "0.85rem" }}>🏆 Leaderboard</button>
         </div>
 
-        <div
-          style={{ marginTop: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.78rem" }}
-        >
-          Your ID:{" "}
-          <code style={{ color: C.text }}>
-            {playerAddress ? playerAddress.slice(0, 14) + "..." : "—"}
-          </code>
+        <button className="btn-outline" onClick={() => setScreen("lookup")}
+          style={{ width: "100%", marginTop: "0.75rem", padding: "0.85rem", textAlign: "center", fontSize: "0.9rem" }}>
+          🔍 Check Game Status / Rejoin
+        </button>
+
+        <div style={{ marginTop: "1.25rem", textAlign: "center", color: C.muted, fontSize: "0.78rem" }}>
+          Your ID: <code style={{ color: C.text }}>{playerAddress ? playerAddress.slice(0, 14) + "..." : "—"}</code>
         </div>
       </div>
     </div>
@@ -922,165 +851,75 @@ export default function HotTakeProtocol() {
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "2rem",
-            }}
-          >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
             <div>
-              <div
-                style={{
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: "2rem",
-                  letterSpacing: "0.06em",
-                }}
-              >
-                {isSolo ? "SOLO ARENA" : "LOBBY"}
-              </div>
-              <div style={{ color: C.muted, fontSize: "0.9rem" }}>
-                Room: <strong>{currentRoom.room_code}</strong>
-              </div>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>{isSolo ? "SOLO ARENA" : "LOBBY"}</div>
+              <div style={{ color: C.muted, fontSize: "0.9rem" }}>Room: <strong style={{ letterSpacing: "0.08em" }}>{currentRoom.room_code}</strong></div>
             </div>
             <div style={{ display: "flex", gap: "0.65rem" }}>
-              <button
-                className="btn-outline"
-                onClick={copyRoomCode}
-                style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
-              >
-                📋 Copy
-              </button>
-              <button
-                className="btn-outline"
-                onClick={goHome}
-                style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
-              >
-                ← Leave
-              </button>
+              {!isSolo && <button className="btn-outline" onClick={copyRoomCode} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>📋 Copy Code</button>}
+              <button className="btn-outline" onClick={goHome} style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>← Leave</button>
             </div>
           </div>
 
           <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-              Players ({currentRoom.players.length}/5)
-            </div>
+            <div style={{ fontWeight: 700, marginBottom: "1.25rem" }}>Players ({currentRoom.players.length}/5)</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {currentRoom.players.map((p) => (
-                <div
-                  key={p.address}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0.9rem 1rem",
-                    borderRadius: 10,
-                    background: p.address === playerAddress ? `${C.primary}10` : C.bg,
-                    border: `1.5px solid ${p.address === playerAddress ? C.primary + "40" : C.border}`,
-                  }}
-                >
+                <div key={p.address} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "0.9rem 1rem", borderRadius: 10,
+                  background: p.address === playerAddress ? `${C.primary}10` : C.bg,
+                  border: `1.5px solid ${p.address === playerAddress ? C.primary + "40" : C.border}`,
+                }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <div style={{ fontSize: "1.5rem" }}>
-                      {p.address.startsWith("bot_") ? "🤖" : "👤"}
-                    </div>
+                    <div style={{ fontSize: "1.5rem" }}>{p.address.startsWith("bot_") ? "🤖" : "👤"}</div>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
                         {p.name}
-                        {p.address === currentRoom.host && (
-                          <span style={{ color: C.fire, marginLeft: "0.5rem", fontSize: "0.8rem" }}>
-                            👑 HOST
-                          </span>
-                        )}
+                        {p.address === currentRoom.host && <span style={{ color: C.fire, marginLeft: "0.4rem", fontSize: "0.78rem" }}>👑 HOST</span>}
+                        {p.address === playerAddress && <span style={{ color: C.muted, marginLeft: "0.4rem", fontSize: "0.75rem" }}>(you)</span>}
                       </div>
-                      <div style={{ color: C.muted, fontSize: "0.78rem" }}>
-                        {p.address.startsWith("bot_") ? "AI Bot" : p.address.slice(0, 12) + "..."}
-                      </div>
+                      <div style={{ color: C.muted, fontSize: "0.78rem" }}>{p.address.startsWith("bot_") ? "AI Bot" : p.address.slice(0, 12) + "..."}</div>
                     </div>
                   </div>
-                  <div>
-                    {p.ready ? (
-                      <div style={{ color: C.secondary, fontWeight: 700, fontSize: "0.85rem" }}>
-                        ✓ READY
-                      </div>
-                    ) : (
-                      <div style={{ color: C.muted, fontSize: "0.85rem" }}>Waiting...</div>
-                    )}
-                  </div>
+                  <div>{p.ready ? <span style={{ color: C.secondary, fontWeight: 700, fontSize: "0.85rem" }}>✓ READY</span> : <span style={{ color: C.muted, fontSize: "0.85rem" }}>Waiting...</span>}</div>
                 </div>
               ))}
             </div>
           </div>
 
           {!isSolo && (
-            <div
-              className="card"
-              style={{
-                background: `${C.fire}10`,
-                borderColor: `${C.fire}40`,
-                marginBottom: "1.5rem",
-              }}
-            >
-              <div style={{ fontSize: "0.9rem", color: C.text }}>
-                <strong>Share this code:</strong>{" "}
-                <span style={{ color: C.fire, fontWeight: 700, fontSize: "1.1rem" }}>
-                  {currentRoom.room_code}
-                </span>
-                <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: "0.25rem" }}>
-                  Friends can join from the homepage
+            <div className="card" style={{ marginBottom: "1.5rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Ready up?</div>
+                  <div style={{ color: C.muted, fontSize: "0.85rem" }}>Let the host know you're ready to play</div>
                 </div>
+                <button className="btn-outline" onClick={toggleReady} disabled={loading}
+                  style={{ borderColor: myPlayer?.ready ? C.secondary : C.border, color: myPlayer?.ready ? C.secondary : C.text }}>
+                  {myPlayer?.ready ? "✓ Ready!" : "Mark Ready"}
+                </button>
               </div>
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            {isHost ? (
-              <button
-                className="btn-primary"
-                onClick={startGame}
-                disabled={!canStart || loading}
-                style={{ flex: 1 }}
-              >
-                {canStart ? "🚀 Start Game" : `Need ${isSolo ? 1 : 3}+ players`}
+          {isHost && (
+            <div className="card">
+              <button className="btn-primary" onClick={startGame}
+                disabled={!canStart || loading} style={{ width: "100%", padding: "1.1rem", marginBottom: "0.75rem" }}>
+                {currentRoom.players.length < (isSolo ? 1 : 3) ? `Need ${isSolo ? 1 : 3}+ players to start` : "🚀 START GAME"}
               </button>
-            ) : (
-              <button
-                className="btn-outline"
-                onClick={toggleReady}
-                disabled={loading || isSolo}
-                style={{ flex: 1 }}
-              >
-                {myPlayer?.ready ? "❌ Not Ready" : "✓ Ready Up"}
-              </button>
-            )}
-          </div>
-
-          {isSolo && (
-            <div
-              className="card"
-              style={{
-                marginTop: "1.5rem",
-                background: `${C.secondary}10`,
-                borderColor: `${C.secondary}40`,
-              }}
-            >
-              <div style={{ fontSize: "0.9rem", color: C.text }}>
-                <strong>🤖 AI Bot Lineup:</strong>
-                <div
-                  style={{
-                    marginTop: "0.75rem",
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "0.5rem",
-                  }}
-                >
-                  {["AgreeBot", "DevilBot", "JokerBot", "ThinkBot"].map((bot) => (
-                    <div key={bot} style={{ fontSize: "0.85rem", color: C.muted }}>
-                      • {bot}
-                    </div>
-                  ))}
-                </div>
+              <div style={{ color: C.muted, fontSize: "0.8rem", textAlign: "center" }}>
+                {isSolo
+                  ? "⚡ Start generates AI scenarios (~30-60s). Bot takes load separately in the background."
+                  : "⚡ Start generates AI scenarios for all players (~30-60s on studionet)."}
               </div>
+            </div>
+          )}
+          {!isHost && (
+            <div className="card" style={{ textAlign: "center", color: C.muted }}>
+              <div className="pulse">⏳ Waiting for host to start the game...</div>
             </div>
           )}
         </div>
@@ -1090,67 +929,57 @@ export default function HotTakeProtocol() {
 
   const renderGame = () => {
     if (!currentRoom) return null;
-    const mySubmission = Object.entries(currentRoom.submissions).find(([key]) =>
-      key.startsWith(playerAddress)
-    );
+    const mySubmission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(playerAddress));
     const hasSubmitted = !!mySubmission;
     const isRound1 = currentRoom.status === "round_1";
     const isRound2 = currentRoom.status === "round_2";
+    const isSolo = currentRoom.solo_mode === true;
+    const myVoted = !!(currentRoom.votes[playerAddress]);
+
+    // ── SOLO: bots still loading ──
+    const botsStillLoading = isSolo && isRound1 && currentRoom.bots_ready === false;
 
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "2rem",
-            }}
-          >
-            <div
-              style={{
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: "2rem",
-                letterSpacing: "0.06em",
-              }}
-            >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>
               {isRound1 ? "ROUND 1: HOT TAKES" : "ROUND 2: VOTING"}
             </div>
             <div style={{ color: C.muted, fontSize: "0.85rem" }}>Room: {currentRoom.room_code}</div>
           </div>
 
+          {/* ── SOLO BOTS LOADING BANNER ── */}
+          {botsStillLoading && (
+            <div style={{
+              padding: "0.85rem 1.1rem", marginBottom: "1.25rem", borderRadius: 12,
+              background: `${C.purple}08`, border: `1.5px solid ${C.purple}25`,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.88rem", color: C.purple }}>🤖 AI bots are preparing their takes...</span>
+                <span style={{ fontSize: "0.75rem", color: C.muted }}>~30-60s</span>
+              </div>
+              <div className="bots-loading-bar"><div className="bots-loading-bar-fill" /></div>
+              <div style={{ fontSize: "0.78rem", color: C.muted, marginTop: "0.4rem" }}>You can write your take now — bots will be ready before voting starts.</div>
+            </div>
+          )}
+
+          {/* ────── ROUND 1 ────── */}
           {isRound1 && (
             <>
               {!hasSubmitted ? (
                 <>
                   <div className="card" style={{ marginBottom: "1.5rem" }}>
-                    <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-                      Choose Your Scenario
-                    </div>
+                    <div style={{ fontWeight: 700, marginBottom: "1.25rem" }}>Choose Your Scenario</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
                       {currentRoom.scenarios.map((s, i) => (
-                        <div
-                          key={i}
-                          onClick={() => setSelectedScenario(i)}
-                          style={{
-                            padding: "1rem 1.25rem",
-                            borderRadius: 12,
-                            border: `2px solid ${selectedScenario === i ? C.primary : C.border}`,
-                            background: selectedScenario === i ? `${C.primary}08` : C.surface,
-                            cursor: "pointer",
-                            transition: "all 0.2s",
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontWeight: 700,
-                              marginBottom: "0.3rem",
-                              color: selectedScenario === i ? C.primary : C.text,
-                            }}
-                          >
-                            {s.title}
-                          </div>
+                        <div key={i} onClick={() => setSelectedScenario(i)} style={{
+                          padding: "1rem 1.25rem", borderRadius: 12, cursor: "pointer",
+                          border: `2px solid ${selectedScenario === i ? C.primary : C.border}`,
+                          background: selectedScenario === i ? `${C.primary}08` : C.surface,
+                          transition: "all 0.2s",
+                        }}>
+                          <div style={{ fontWeight: 700, marginBottom: "0.3rem", color: selectedScenario === i ? C.primary : C.text }}>{s.title}</div>
                           <div style={{ fontSize: "0.85rem", color: C.muted }}>{s.description}</div>
                         </div>
                       ))}
@@ -1159,67 +988,38 @@ export default function HotTakeProtocol() {
 
                   {selectedScenario !== null && (
                     <div className="card slide-up" style={{ marginBottom: "1.5rem" }}>
-                      <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>
-                        Your Stance
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: "0.75rem",
-                          marginBottom: "1.25rem",
-                        }}
-                      >
+                      <div style={{ fontWeight: 700, marginBottom: "1rem" }}>Your Stance</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.25rem" }}>
                         {[
                           { value: "genius", label: "🔥 Genius", cls: "stance-genius" },
                           { value: "trash", label: "🗑️ Trash", cls: "stance-trash" },
                           { value: "spicy", label: "😈 Spicy", cls: "stance-spicy" },
                         ].map(({ value, label, cls }) => (
-                          <div
-                            key={value}
-                            onClick={() => setSelectedStance(value)}
-                            className={cls}
-                            style={{
-                              padding: "0.85rem",
-                              borderRadius: 10,
-                              textAlign: "center",
-                              fontWeight: 700,
-                              fontSize: "0.9rem",
-                              cursor: "pointer",
-                              border: `2px solid ${selectedStance === value ? "#1A202C" : "transparent"}`,
-                              opacity: selectedStance === value ? 1 : 0.7,
-                              transition: "all 0.2s",
-                            }}
-                          >
-                            {label}
-                          </div>
+                          <div key={value} onClick={() => setSelectedStance(value)} className={cls} style={{
+                            padding: "0.85rem", borderRadius: 10, textAlign: "center",
+                            fontWeight: 700, fontSize: "0.9rem", cursor: "pointer",
+                            border: `2px solid ${selectedStance === value ? "#1A202C" : "transparent"}`,
+                            opacity: selectedStance === value ? 1 : 0.7, transition: "all 0.2s",
+                          }}>{label}</div>
                         ))}
                       </div>
-                      <div style={{ fontWeight: 700, marginBottom: "0.75rem", fontSize: "1rem" }}>
-                        Your Take (100 chars max)
+
+                      <div style={{ fontWeight: 700, marginBottom: "0.75rem" }}>
+                        Your Take <span style={{ color: C.muted, fontWeight: 400 }}>(200 chars max)</span>
                       </div>
                       <textarea
-                        placeholder="Write your hot take..."
+                        placeholder="Write your hot take — be persuasive, creative, and spicy..."
                         value={takeText}
-                        onChange={(e) => setTakeText(e.target.value.slice(0, 100))}
-                        style={{ marginBottom: "0.5rem" }}
+                        onChange={(e) => setTakeText(e.target.value.slice(0, 200))}
+                        style={{ marginBottom: "0.5rem", minHeight: 90 }}
                       />
-                      <div
-                        style={{
-                          textAlign: "right",
-                          color: C.muted,
-                          fontSize: "0.85rem",
-                          marginBottom: "1rem",
-                        }}
-                      >
-                        {takeText.length}/100
-                      </div>
-                      <button
-                        className="btn-primary"
-                        onClick={submitTake}
-                        disabled={!selectedStance || !takeText.trim() || loading}
-                        style={{ width: "100%" }}
-                      >
+                      <div style={{
+                        textAlign: "right", fontSize: "0.85rem", marginBottom: "1rem",
+                        color: takeText.length > 180 ? C.fire : C.muted,
+                        fontWeight: takeText.length > 180 ? 700 : 400,
+                      }}>{takeText.length}/200</div>
+                      <button className="btn-primary" onClick={submitTake}
+                        disabled={!selectedStance || !takeText.trim() || loading} style={{ width: "100%" }}>
                         🔥 Submit Take
                       </button>
                     </div>
@@ -1227,121 +1027,123 @@ export default function HotTakeProtocol() {
                 </>
               ) : (
                 <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✓</div>
-                  <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>
-                    Take Submitted!
+                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✅</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div>
+                  <div style={{ color: C.muted, marginBottom: "1.5rem" }}>Waiting for other players...</div>
+                  <div className="pulse" style={{ color: C.fire, fontSize: "0.9rem", marginBottom: "1.25rem" }}>
+                    {currentRoom.players.filter((p) =>
+                      Object.keys(currentRoom.submissions).some((k) => k.startsWith(p.address))
+                    ).length}/{currentRoom.players.length} submitted
                   </div>
-                  <div style={{ color: C.muted, marginBottom: "1.5rem" }}>
-                    Waiting for other players...
-                  </div>
-                  <div className="pulse" style={{ color: C.fire, fontSize: "0.9rem" }}>
-                    {
-                      currentRoom.players.filter((p) =>
-                        Object.keys(currentRoom.submissions).some((k) => k.startsWith(p.address))
-                      ).length
-                    }
-                    /{currentRoom.players.length} submitted
-                  </div>
+                  {mySubmission && (
+                    <div style={{ textAlign: "left", padding: "0.85rem 1rem", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: "0.3rem" }}>Your take:</div>
+                      <div style={{ fontStyle: "italic", fontSize: "0.88rem" }}>&ldquo;{mySubmission[1]?.take}&rdquo;</div>
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
 
+          {/* ────── ROUND 2: VOTING ────── */}
           {isRound2 && (
             <>
-              <div className="card" style={{ marginBottom: "1.5rem" }}>
-                <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-                  Vote for the Best Takes (select up to 3)
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-                  {currentRoom.players
-                    .filter((p) => p.address !== playerAddress && !p.address.startsWith("bot_"))
-                    .map((p) => {
-                      const submission = Object.entries(currentRoom.submissions).find(([key]) =>
-                        key.startsWith(p.address)
-                      );
-                      if (!submission) return null;
-                      const [, data] = submission;
-                      const scenario = currentRoom.scenarios[data.scenario_index];
-                      const isVoted = Object.values(votes).includes(p.address);
-                      return (
-                        <div
-                          key={p.address}
-                          onClick={() => {
-                            if (Object.keys(votes).length >= 3 && !isVoted) return;
-                            const newVotes = { ...votes };
-                            const existingKey = Object.keys(newVotes).find(
-                              (k) => newVotes[k] === p.address
-                            );
-                            if (existingKey) delete newVotes[existingKey];
-                            else newVotes[Date.now().toString()] = p.address;
-                            setVotes(newVotes);
-                          }}
-                          style={{
-                            padding: "1rem 1.25rem",
-                            borderRadius: 12,
-                            border: `2px solid ${isVoted ? C.primary : C.border}`,
-                            background: isVoted ? `${C.primary}08` : C.surface,
-                            cursor: "pointer",
-                            transition: "all 0.2s",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "flex-start",
-                              marginBottom: "0.5rem",
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.name}</div>
-                              <div style={{ fontSize: "0.78rem", color: C.muted }}>
-                                {scenario?.title}
+              {!myVoted ? (
+                <>
+                  <div style={{ marginBottom: "1rem", padding: "0.85rem 1rem", background: `${C.gold}10`, border: `1px solid ${C.gold}30`, borderRadius: 10, fontSize: "0.85rem" }}>
+                    🗳️ Vote for up to <strong>3 best takes</strong>. Your votes add bonus points to the final score.
+                  </div>
+
+                  <div className="card" style={{ marginBottom: "1.5rem" }}>
+                    <div style={{ fontWeight: 700, marginBottom: "1.25rem" }}>All Takes — Tap to Vote</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                      {currentRoom.players
+                        .filter((p) => {
+                          // ── KEY FIX: in solo mode show bot takes for voting ──
+                          // Previously bots were filtered out → blank voting screen in solo.
+                          // In solo: show ALL takes except your own (including bots).
+                          // In multiplayer: show other human players only.
+                          if (isSolo) return p.address !== playerAddress;
+                          return p.address !== playerAddress && !p.address.startsWith("bot_");
+                        })
+                        .map((p) => {
+                          const submission = Object.entries(currentRoom.submissions).find(([key]) => key.startsWith(p.address));
+                          if (!submission) return null;
+                          const [, data] = submission;
+                          const scenario = currentRoom.scenarios[data.scenario_index];
+                          const isVoted = Object.values(votes).includes(p.address);
+                          const maxReached = Object.keys(votes).length >= 3 && !isVoted;
+
+                          return (
+                            <div key={p.address} onClick={() => {
+                              if (maxReached) return;
+                              const nv = { ...votes };
+                              const ek = Object.keys(nv).find((k) => nv[k] === p.address);
+                              if (ek) delete nv[ek]; else nv[Date.now().toString()] = p.address;
+                              setVotes(nv);
+                            }} style={{
+                              padding: "1rem 1.25rem", borderRadius: 12, cursor: maxReached ? "default" : "pointer",
+                              border: `2px solid ${isVoted ? C.primary : C.border}`,
+                              background: isVoted ? `${C.primary}08` : C.surface,
+                              opacity: maxReached ? 0.45 : 1, transition: "all 0.2s",
+                            }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                                <div>
+                                  <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                                    {p.name}
+                                    {p.address.startsWith("bot_") && <span style={{ color: C.purple, marginLeft: "0.4rem", fontSize: "0.75rem" }}>🤖 AI</span>}
+                                  </div>
+                                  <div style={{ fontSize: "0.78rem", color: C.muted }}>{scenario?.title}</div>
+                                </div>
+                                <div className={`stance-${data.stance}`} style={{ padding: "0.35rem 0.65rem", borderRadius: 8, fontSize: "0.75rem", fontWeight: 700 }}>
+                                  {data.stance === "genius" ? "🔥 Genius" : data.stance === "trash" ? "🗑️ Trash" : "😈 Spicy"}
+                                </div>
                               </div>
+                              <div style={{ fontSize: "0.9rem", fontStyle: "italic" }}>&ldquo;{data.take}&rdquo;</div>
+                              {isVoted && <div style={{ marginTop: "0.5rem" }}><span className="voted-chip">✓ Voted</span></div>}
                             </div>
-                            <div
-                              className={`stance-${data.stance}`}
-                              style={{
-                                padding: "0.4rem 0.75rem",
-                                borderRadius: 8,
-                                fontSize: "0.75rem",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {data.stance === "genius"
-                                ? "🔥"
-                                : data.stance === "trash"
-                                ? "🗑️"
-                                : "😈"}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: "0.9rem", fontStyle: "italic", color: C.text }}>
-                            &ldquo;{data.take}&rdquo;
-                          </div>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: "center", color: C.muted, fontSize: "0.85rem", marginBottom: "1rem" }}>
+                    {Object.keys(votes).length}/3 votes cast
+                  </div>
+                  <button className="btn-primary" onClick={submitVotes}
+                    disabled={Object.keys(votes).length === 0 || loading} style={{ width: "100%" }}>
+                    Submit Votes ({Object.keys(votes).length})
+                  </button>
+                </>
+              ) : (
+                // Voted — waiting for others + AI to calculate
+                <div className="card" style={{ textAlign: "center", padding: "2.5rem" }}>
+                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🗳️</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.2rem", marginBottom: "1.25rem" }}>Votes Submitted!</div>
+
+                  {/* Per-player vote status */}
+                  <div style={{ marginBottom: "1.5rem", textAlign: "left" }}>
+                    {currentRoom.players.filter((p) => !p.address.startsWith("bot_")).map((p) => (
+                      <div key={p.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 0", borderBottom: `1px solid ${C.border}` }}>
+                        <span style={{ fontSize: "0.88rem" }}>{p.name}{p.address === playerAddress ? " (you)" : ""}</span>
+                        {currentRoom.votes[p.address]
+                          ? <span className="voted-chip">✓ Voted</span>
+                          : <span className="pending-chip">Pending...</span>
+                        }
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ border: `2px solid ${C.purple}30`, background: `${C.purple}06`, borderRadius: 12, padding: "1.5rem" }}>
+                    <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Waiting for all players to vote...</div>
+                    <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
+                      Once everyone votes, AI judges will evaluate all takes and calculate final scores.
+                    </div>
+                    <div className="ai-dots"><span /><span /><span /></div>
+                  </div>
                 </div>
-              </div>
-              <div
-                style={{
-                  marginBottom: "1rem",
-                  textAlign: "center",
-                  color: C.muted,
-                  fontSize: "0.85rem",
-                }}
-              >
-                {Object.keys(votes).length}/3 votes cast
-              </div>
-              <button
-                className="btn-primary"
-                onClick={submitVotes}
-                disabled={Object.keys(votes).length === 0 || loading}
-                style={{ width: "100%" }}
-              >
-                Submit Votes ({Object.keys(votes).length})
-              </button>
+              )}
             </>
           )}
         </div>
@@ -1350,86 +1152,70 @@ export default function HotTakeProtocol() {
   };
 
   const renderResults = () => {
-    if (!currentRoom || !currentRoom.results) return null;
+    if (!currentRoom) return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.bg }}>
+        <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+          <div className="spin" style={{ fontSize: "2rem", marginBottom: "1rem" }}>🔥</div>
+          <div style={{ fontWeight: 700 }}>Loading results...</div>
+        </div>
+      </div>
+    );
+
+    if (!currentRoom.results?.final_scores) return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.bg }}>
+        <div className="card" style={{ textAlign: "center", padding: "3rem", maxWidth: 380 }}>
+          <div className="ai-dots" style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "center" }}><span /><span /><span /></div>
+          <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>AI is finalizing scores...</div>
+          <div style={{ color: C.muted, fontSize: "0.85rem", marginBottom: "1.25rem" }}>This page will update automatically.</div>
+          <button className="btn-outline" onClick={manualRefreshResults} disabled={loading}
+            style={{ width: "100%", fontSize: "0.85rem", padding: "0.75rem" }}>
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+    );
+
     const { final_scores, ai_rankings } = currentRoom.results;
-    const sortedScores = Object.entries(final_scores || {})
-      .map(([addr, data]: [string, any]) => ({ address: addr, ...data }))
+    const sorted = Object.entries(final_scores || {})
+      .map(([addr, d]: [string, any]) => ({ address: addr, ...d }))
       .sort((a: any, b: any) => b.total - a.total);
+    const iWon = sorted[0]?.address === playerAddress;
 
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
-            <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>
-              {sortedScores[0]?.address === playerAddress ? "🏆" : "🔥"}
+            <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>{iWon ? "🏆" : "🔥"}</div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3rem", letterSpacing: "0.06em" }}>
+              {iWon ? "VICTORY!" : "GAME OVER"}
             </div>
-            <div
-              style={{
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: "3rem",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {sortedScores[0]?.address === playerAddress ? "VICTORY!" : "GAME OVER"}
+            <div style={{ color: C.muted, marginTop: "0.5rem", fontSize: "0.85rem" }}>
+              Room: <strong>{currentRoom.room_code}</strong> · {currentRoom.solo_mode ? "Solo Arena" : "Multiplayer"}
             </div>
           </div>
 
           <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ fontWeight: 700, marginBottom: "1.25rem", fontSize: "1rem" }}>
-              Final Scores
-            </div>
+            <div style={{ fontWeight: 700, marginBottom: "1.25rem" }}>🏅 Final Scores</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {sortedScores.map((score: any, i: number) => {
-                const medals = ["🥇", "🥈", "🥉"];
+              {sorted.map((s: any, i: number) => {
+                const isMe = s.address === playerAddress;
                 return (
-                  <div
-                    key={score.address}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "1rem 1.25rem",
-                      borderRadius: 12,
-                      background:
-                        score.address === playerAddress
-                          ? `${C.primary}10`
-                          : i === 0
-                          ? `${C.gold}10`
-                          : C.bg,
-                      border: `2px solid ${
-                        score.address === playerAddress
-                          ? C.primary + "40"
-                          : i === 0
-                          ? C.gold + "40"
-                          : C.border
-                      }`,
-                    }}
-                  >
+                  <div key={s.address} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "1rem 1.25rem", borderRadius: 12,
+                    background: isMe ? `${C.primary}10` : i === 0 ? `${C.gold}10` : C.bg,
+                    border: `2px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "40" : C.border}`,
+                  }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.5rem", minWidth: 32 }}>
-                        {medals[i] || `${i + 1}.`}
-                      </div>
+                      <div style={{ fontSize: "1.5rem", minWidth: 32 }}>{["🥇","🥈","🥉"][i] || `${i+1}.`}</div>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>
-                          {score.player_name}
-                          {score.address === playerAddress && (
-                            <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>
-                          )}
+                          {s.player_name}{isMe && <span style={{ color: C.muted, fontSize: "0.8rem" }}> (you)</span>}
                         </div>
-                        <div style={{ fontSize: "0.78rem", color: C.muted }}>
-                          AI: {score.ai_points}pts · Votes: +{score.vote_bonus}
-                        </div>
+                        <div style={{ fontSize: "0.78rem", color: C.muted }}>AI: {s.ai_points}pts · Vote bonus: +{s.vote_bonus}</div>
                       </div>
                     </div>
-                    <div
-                      style={{
-                        fontFamily: "'Bebas Neue', sans-serif",
-                        fontSize: "1.75rem",
-                        color: i === 0 ? C.gold : C.text,
-                      }}
-                    >
-                      {score.total}
-                    </div>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.75rem", color: i === 0 ? C.gold : C.text }}>{s.total}</div>
                   </div>
                 );
               })}
@@ -1438,65 +1224,25 @@ export default function HotTakeProtocol() {
 
           {ai_rankings && (
             <div className="card" style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>
-                🤖 AI Judge Reasoning
-              </div>
-              {Object.entries(ai_rankings).map(([scenarioKey, rankings]: [string, any]) => {
-                const scenarioIdx = parseInt(scenarioKey.replace("scenario_", ""));
-                const scenario = currentRoom.scenarios[scenarioIdx];
+              <div style={{ fontWeight: 700, marginBottom: "1rem" }}>🤖 AI Judge Reasoning</div>
+              {Object.entries(ai_rankings).map(([key, rankings]: [string, any]) => {
+                const idx = parseInt(key.replace("scenario_", ""));
+                const sc = currentRoom.scenarios[idx];
                 return (
-                  <div key={scenarioKey} style={{ marginBottom: "1rem" }}>
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        marginBottom: "0.5rem",
-                        color: C.fire,
-                        fontSize: "0.9rem",
-                      }}
-                    >
-                      {scenario?.title || scenarioKey}
-                    </div>
-                    {Array.isArray(rankings) &&
-                      rankings.map((rank: any) => {
-                        const pName =
-                          currentRoom.players.find((p) => p.address === rank.player)?.name ||
-                          rank.player?.slice(0, 8) + "...";
-                        return (
-                          <div
-                            key={rank.player}
-                            style={{
-                              display: "flex",
-                              gap: "0.75rem",
-                              padding: "0.75rem 0.85rem",
-                              background: C.bg,
-                              borderRadius: 8,
-                              marginBottom: "0.5rem",
-                            }}
-                          >
-                            <div
-                              style={{
-                                color: rank.rank === 1 ? C.gold : C.muted,
-                                fontWeight: 700,
-                                minWidth: 24,
-                                fontSize: "0.9rem",
-                              }}
-                            >
-                              #{rank.rank}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>
-                                {pName} ·{" "}
-                                <span style={{ color: C.muted, fontWeight: 400 }}>
-                                  {rank.score}pts
-                                </span>
-                              </div>
-                              <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>
-                                {rank.reasoning}
-                              </div>
-                            </div>
+                  <div key={key} style={{ marginBottom: "1.25rem" }}>
+                    <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>{sc?.title || key}</div>
+                    {Array.isArray(rankings) && rankings.map((r: any) => {
+                      const pn = currentRoom.players.find((p) => p.address === r.player)?.name || r.player?.slice(0, 8) + "...";
+                      return (
+                        <div key={r.player} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 0.85rem", background: C.bg, borderRadius: 8, marginBottom: "0.5rem" }}>
+                          <div style={{ color: r.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24 }}>#{r.rank}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>{pn} · <span style={{ color: C.muted, fontWeight: 400 }}>{r.score}pts</span></div>
+                            <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>{r.reasoning}</div>
                           </div>
-                        );
-                      })}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -1504,125 +1250,141 @@ export default function HotTakeProtocol() {
           )}
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            <button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>
-              🔥 Play Again
-            </button>
-            <button className="btn-outline" onClick={goHome}>
-              🏠 Home
-            </button>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={createRoom} disabled={loading}>🔥 Play Again</button>
+            <button className="btn-outline" onClick={goHome}>🏠 Home</button>
           </div>
         </div>
       </div>
     );
   };
 
+  const renderLookup = () => (
+    <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
+      <div style={{ maxWidth: 540, margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🔍 CHECK GAME</div>
+          <button className="btn-outline" onClick={() => setScreen("landing")} style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }}>← Back</button>
+        </div>
+
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <div style={{ fontWeight: 700, marginBottom: "0.75rem" }}>Enter Room Code</div>
+          <div style={{ display: "flex", gap: "0.6rem" }}>
+            <input type="text" placeholder="e.g. AB3K7X" value={lookupCode}
+              onChange={(e) => setLookupCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && lookupGame()}
+              style={{ flex: 1, margin: 0 }} />
+            <button className="btn-primary" onClick={lookupGame} disabled={lookupLoading || !lookupCode.trim()}
+              style={{ whiteSpace: "nowrap", padding: "0.9rem 1.2rem" }}>
+              {lookupLoading ? "..." : "Look Up"}
+            </button>
+          </div>
+          {lookupError && <div style={{ color: C.primary, fontSize: "0.85rem", marginTop: "0.75rem" }}>{lookupError}</div>}
+        </div>
+
+        {lookupRoom && (() => {
+          const statusMap: Record<string, string> = {
+            lobby: "⏳ In Lobby",
+            round_1: "🔥 Round 1 — Taking Submissions",
+            round_2: "🗳️ Round 2 — Voting",
+            completed: "✅ Completed",
+          };
+          const isParticipant = lookupRoom.players.some((p) => p.address === playerAddress);
+          return (
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.5rem", letterSpacing: "0.06em" }}>ROOM {lookupRoom.room_code}</div>
+                <div style={{ padding: "0.4rem 0.85rem", borderRadius: 8, background: `${C.secondary}15`, border: `1px solid ${C.secondary}30`, fontSize: "0.82rem", fontWeight: 600 }}>
+                  {statusMap[lookupRoom.status] || lookupRoom.status}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ fontSize: "0.78rem", color: C.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.5rem" }}>Players</div>
+                {lookupRoom.players.map((p) => (
+                  <div key={p.address} style={{ display: "flex", gap: "0.6rem", alignItems: "center", padding: "0.4rem 0", borderBottom: `1px solid ${C.border}` }}>
+                    <span>{p.address.startsWith("bot_") ? "🤖" : "👤"}</span>
+                    <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{p.name}</span>
+                    {p.address === playerAddress && <span style={{ fontSize: "0.75rem", color: C.muted }}>(you)</span>}
+                    {p.address === lookupRoom.host && <span style={{ fontSize: "0.75rem", color: C.fire }}>👑</span>}
+                  </div>
+                ))}
+              </div>
+
+              {lookupRoom.status === "completed" && lookupRoom.results?.final_scores && (
+                <div style={{ marginBottom: "1rem" }}>
+                  <div style={{ fontSize: "0.78rem", color: C.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.5rem" }}>Scores</div>
+                  {Object.entries(lookupRoom.results.final_scores)
+                    .sort(([, a]: any, [, b]: any) => b.total - a.total)
+                    .map(([addr, d]: any, i) => (
+                      <div key={addr} style={{ display: "flex", justifyContent: "space-between", padding: "0.4rem 0", borderBottom: `1px solid ${C.border}` }}>
+                        <span style={{ fontSize: "0.88rem" }}>{["🥇","🥈","🥉"][i] || `${i+1}.`} {d.player_name}</span>
+                        <span style={{ fontWeight: 700, color: i === 0 ? C.gold : C.text }}>{d.total}pts</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {isParticipant && lookupRoom.status !== "completed" && (
+                <button className="btn-primary" onClick={() => rejoinFromLookup(lookupRoom)} style={{ width: "100%", marginTop: "0.5rem" }}>
+                  ↩️ Rejoin This Game
+                </button>
+              )}
+              {lookupRoom.status === "completed" && (
+                <button className="btn-outline" onClick={() => rejoinFromLookup(lookupRoom)} style={{ width: "100%", marginTop: "0.5rem" }}>
+                  📋 View Full Results
+                </button>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+
   const renderStats = () => {
     const [myStats, setMyStats] = useState<any>(null);
-    const [statsLoading, setStatsLoading] = useState(true);
+    const [sl, setSl] = useState(true);
     useEffect(() => {
       readContract("get_player_stats", [playerAddress])
-        .then((raw: any) => {
-          if (raw) setMyStats(JSON.parse(raw as string));
-        })
+        .then((r: any) => { if (r) setMyStats(JSON.parse(r as string)); })
         .catch(() => {})
-        .finally(() => setStatsLoading(false));
+        .finally(() => setSl(false));
     }, [playerAddress]);
 
     return (
       <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
         <div style={{ maxWidth: 580, margin: "0 auto" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "2rem",
-            }}
-          >
-            <div
-              style={{
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: "2rem",
-                letterSpacing: "0.06em",
-              }}
-            >
-              MY STATS
-            </div>
-            <button
-              className="btn-outline"
-              style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }}
-              onClick={goHome}
-            >
-              ← Back
-            </button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>MY STATS</div>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
           </div>
-          {statsLoading ? (
-            <div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}>
-              <div className="spin" style={{ fontSize: "2.5rem" }}>🔥</div>
-              <div style={{ marginTop: "1rem" }}>Loading stats...</div>
-            </div>
-          ) : myStats ? (
-            <>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "1rem",
-                  marginBottom: "1.5rem",
-                }}
-              >
-                {[
-                  { label: "Games Played", value: myStats.games_played, icon: "🎮" },
-                  { label: "Wins", value: myStats.wins, icon: "🏆" },
-                  { label: "Total Points", value: myStats.total_points, icon: "🔥" },
-                  {
-                    label: "Win Rate",
-                    value:
-                      myStats.games_played > 0
-                        ? `${Math.round((myStats.wins / myStats.games_played) * 100)}%`
-                        : "—",
-                    icon: "📊",
-                  },
-                ].map((stat) => (
-                  <div key={stat.label} className="card" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{stat.icon}</div>
-                    <div
-                      style={{
-                        fontFamily: "'Bebas Neue', sans-serif",
-                        fontSize: "2.5rem",
-                        color: C.primary,
-                      }}
-                    >
-                      {stat.value}
+          {sl
+            ? <div className="card" style={{ textAlign: "center", padding: "3rem", color: C.muted }}><div className="spin" style={{ fontSize: "2rem" }}>🔥</div><div style={{ marginTop: "1rem" }}>Loading...</div></div>
+            : myStats
+              ? <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+                    {[
+                      { label: "Games Played", value: myStats.games_played, icon: "🎮" },
+                      { label: "Wins", value: myStats.wins, icon: "🏆" },
+                      { label: "Total Points", value: myStats.total_points, icon: "🔥" },
+                      { label: "Win Rate", value: myStats.games_played > 0 ? `${Math.round(myStats.wins/myStats.games_played*100)}%` : "—", icon: "📊" },
+                    ].map((s) => (
+                      <div key={s.label} className="card" style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{s.icon}</div>
+                        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: C.primary }}>{s.value}</div>
+                        <div style={{ color: C.muted, fontSize: "0.85rem" }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {myStats.best_performance && (
+                    <div className="card" style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}>
+                      <div style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem" }}>🏅 Best Performance</div>
+                      <div style={{ color: C.muted, fontSize: "0.9rem" }}>Score: <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in Game #{myStats.best_performance.game_id}</div>
                     </div>
-                    <div style={{ color: C.muted, fontSize: "0.85rem" }}>{stat.label}</div>
-                  </div>
-                ))}
-              </div>
-              {myStats.best_performance && (
-                <div
-                  className="card"
-                  style={{ background: `${C.gold}10`, borderColor: `${C.gold}40` }}
-                >
-                  <div
-                    style={{ color: C.gold, fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}
-                  >
-                    🏅 Best Performance
-                  </div>
-                  <div style={{ color: C.muted, fontSize: "0.9rem" }}>
-                    Score:{" "}
-                    <strong style={{ color: C.text }}>{myStats.best_performance.score} pts</strong> in
-                    Game #{myStats.best_performance.game_id}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🎮</div>
-              {playerAddress ? "No games played yet. Get in there!" : "Set your name to view stats."}
-            </div>
-          )}
+                  )}
+                </>
+              : <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}><div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🎮</div>No games played yet. Get in there!</div>
+          }
         </div>
       </div>
     );
@@ -1631,125 +1393,56 @@ export default function HotTakeProtocol() {
   const renderLeaderboard = () => (
     <div style={{ minHeight: "100vh", background: C.bg, padding: "2rem 1.5rem" }} className="fadeIn">
       <div style={{ maxWidth: 680, margin: "0 auto" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "2rem",
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "'Bebas Neue', sans-serif",
-              fontSize: "2rem",
-              letterSpacing: "0.06em",
-            }}
-          >
-            🏆 LEADERBOARD
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2rem", letterSpacing: "0.06em" }}>🏆 LEADERBOARD</div>
           <div style={{ display: "flex", gap: "0.65rem" }}>
-            <button
-              className="btn-outline"
-              style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }}
-              onClick={loadLeaderboard}
-            >
-              ↻ Refresh
-            </button>
-            <button
-              className="btn-outline"
-              style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }}
-              onClick={goHome}
-            >
-              ← Back
-            </button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={loadLeaderboard}>↻ Refresh</button>
+            <button className="btn-outline" style={{ padding: "0.6rem 1.1rem", fontSize: "0.85rem" }} onClick={goHome}>← Back</button>
           </div>
         </div>
-        {leaderboard.length === 0 ? (
-          <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🏆</div>
-            No players on the leaderboard yet. Play some games!
-          </div>
-        ) : (
-          <div className="card">
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
-              {leaderboard.map((entry, i) => {
-                const medals = ["🥇", "🥈", "🥉"];
-                const isMe = entry.address === playerAddress;
-                return (
-                  <div
-                    key={entry.address}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "1rem 1.1rem",
-                      borderRadius: 10,
-                      background: isMe
-                        ? `${C.primary}10`
-                        : i === 0
-                        ? `${C.gold}08`
-                        : C.bg,
-                      border: `1.5px solid ${
-                        isMe ? C.primary + "40" : i === 0 ? C.gold + "30" : C.border
-                      }`,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                      <div style={{ fontSize: "1.3rem", minWidth: 28 }}>
-                        {medals[i] || `${i + 1}.`}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                          {entry.address.slice(0, 10)}...
-                          {isMe && (
-                            <span style={{ color: C.muted, fontWeight: 400, fontSize: "0.78rem" }}>
-                              {" "}
-                              (you)
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ color: C.muted, fontSize: "0.78rem" }}>
-                          {entry.games_played} games · {entry.wins} wins
+        {leaderboard.length === 0
+          ? <div className="card" style={{ textAlign: "center", color: C.muted, padding: "3rem" }}><div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🏆</div>No players yet.</div>
+          : <div className="card">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+                {leaderboard.map((e, i) => {
+                  const isMe = e.address === playerAddress;
+                  return (
+                    <div key={e.address} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "1rem 1.1rem", borderRadius: 10,
+                      background: isMe ? `${C.primary}10` : i === 0 ? `${C.gold}08` : C.bg,
+                      border: `1.5px solid ${isMe ? C.primary + "40" : i === 0 ? C.gold + "30" : C.border}`,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+                        <div style={{ fontSize: "1.3rem", minWidth: 28 }}>{["🥇","🥈","🥉"][i] || `${i+1}.`}</div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{e.address.slice(0,10)}...{isMe && <span style={{ color: C.muted, fontSize: "0.78rem" }}> (you)</span>}</div>
+                          <div style={{ color: C.muted, fontSize: "0.78rem" }}>{e.games_played} games · {e.wins} wins</div>
                         </div>
                       </div>
+                      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.6rem", color: i === 0 ? C.gold : C.text }}>
+                        {e.total_points} <span style={{ fontSize: "0.65rem", color: C.muted }}>pts</span>
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontFamily: "'Bebas Neue', sans-serif",
-                        fontSize: "1.6rem",
-                        color: i === 0 ? C.gold : C.text,
-                      }}
-                    >
-                      {entry.total_points}{" "}
-                      <span style={{ fontSize: "0.65rem", color: C.muted }}>pts</span>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+        }
       </div>
     </div>
   );
 
   const renderScreen = () => {
     switch (screen) {
-      case "landing":
-        return renderLanding();
-      case "lobby":
-        return renderLobby();
-      case "game":
-        return renderGame();
-      case "results":
-        return renderResults();
-      case "stats":
-        return renderStats();
-      case "leaderboard":
-        return renderLeaderboard();
-      default:
-        return renderLanding();
+      case "landing": return renderLanding();
+      case "lobby": return renderLobby();
+      case "game": return renderGame();
+      case "results": return renderResults();
+      case "stats": return renderStats();
+      case "leaderboard": return renderLeaderboard();
+      case "lookup": return renderLookup();
+      default: return renderLanding();
     }
   };
 
@@ -1757,6 +1450,7 @@ export default function HotTakeProtocol() {
     <>
       <style>{css}</style>
       {renderLoadingOverlay()}
+      {renderWaitingForResults()}
       {renderScreen()}
     </>
   );
