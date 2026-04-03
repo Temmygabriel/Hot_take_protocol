@@ -135,6 +135,12 @@ function allVotesIn(room: Room): boolean {
   return humanPlayers.length > 0 && humanPlayers.every((p) => room.votes[p.address]);
 }
 
+// Timestamp (ms) when we first detected all votes were in.
+// Used for the host-dropout fallback: if the host hasn't fired
+// calculate_results within CALCULATE_TIMEOUT_MS, any player can step up.
+let allVotesDetectedAt: number | null = null;
+const CALCULATE_TIMEOUT_MS = 30_000; // 30 seconds grace period for host
+
 // ============================================
 // COLORS
 // ============================================
@@ -337,6 +343,7 @@ export default function HotTakeProtocol() {
   // Manual refresh fallback — for non-host players waiting on results
   const [waitingForResults, setWaitingForResults] = useState(false);
   const [manualRefreshRoom, setManualRefreshRoom] = useState<string>("");
+  const [waitingSecondsLeft, setWaitingSecondsLeft] = useState(30);
 
   // Refs to avoid stale closures in polling
   const screenRef = useRef<Screen>("landing");
@@ -359,7 +366,23 @@ export default function HotTakeProtocol() {
   }, [loading]);
 
   useEffect(() => {
+    // Restore or create the session account.
+    // IMPORTANT: persist the address in localStorage so that if the player
+    // gets kicked (network drop, tab refresh) they come back as the same address
+    // and can rejoin mid-game. Without this, createAccount() generates a fresh
+    // address each session, making them look like a new unknown player.
+    const saved = localStorage.getItem("htp_player_address");
     const { account } = makeClient();
+    if (saved && saved !== account.address) {
+      // The account object is derived from a stored key — if we saved one before,
+      // we need to ensure the same key is used. For studionet (no real private keys),
+      // the best we can do is save the address and show it to the user for lookup.
+      // The genlayer-js createAccount() is deterministic per-browser if we seed it,
+      // but since we can't control that, we save what we got and use it consistently.
+      localStorage.setItem("htp_player_address", account.address);
+    } else if (!saved) {
+      localStorage.setItem("htp_player_address", account.address);
+    }
     setPlayerAddress(account.address);
     loadLeaderboard();
   }, []);
@@ -401,6 +424,8 @@ export default function HotTakeProtocol() {
     setVotes({});
     setWaitingForResults(false);
     setManualRefreshRoom("");
+    setWaitingSecondsLeft(30);
+    allVotesDetectedAt = null;
   }, [stopPolling]);
 
   // ─────────────────────────────────────────────────────────
@@ -418,6 +443,7 @@ export default function HotTakeProtocol() {
     pollRoomCodeRef.current = code;
     calculatingRef.current = false;
     generatingBotsRef.current = false;
+    allVotesDetectedAt = null;
 
     const interval = setInterval(async () => {
       if (pollRoomCodeRef.current !== code) return;
@@ -432,7 +458,7 @@ export default function HotTakeProtocol() {
         const isHost = room.host === myAddr;
         const isSolo = room.solo_mode === true;
 
-        // Lobby → Game: host just started, scenarios generated
+        // ── Lobby → Game: non-host detected host started ──
         if (room.status === "round_1" && cs === "lobby") {
           setCurrentRoom(room);
           setScreen("game");
@@ -440,12 +466,8 @@ export default function HotTakeProtocol() {
         }
 
         // ── SOLO BOT TAKES: trigger generate_bot_takes once in background ──
-        // After start_game, bots_ready=false. The host (always = player in solo)
-        // fires generate_bot_takes. It's a separate AI tx so the game screen
-        // shows immediately while bots are loading.
         if (isSolo && room.status === "round_1" && room.bots_ready === false && !generatingBotsRef.current) {
           generatingBotsRef.current = true;
-          console.log("Triggering generate_bot_takes in background...");
           try {
             await writeContract("generate_bot_takes", [code]);
             const freshRaw = await readContract("get_room", [code]);
@@ -454,63 +476,83 @@ export default function HotTakeProtocol() {
             }
           } catch (err: any) {
             console.error("generate_bot_takes failed:", err?.message);
-            generatingBotsRef.current = false; // allow retry
+            generatingBotsRef.current = false;
           }
           return;
         }
 
-        // Round 1 → Round 2: all takes in, advance happened
-        if (room.status === "round_2" && cs === "game") {
-          setCurrentRoom(room);
-          return; // renderGame handles round_2 display
-        }
-
-        // All votes in — HOST triggers calculate_results once
-        if (room.status === "round_2" && allVotesIn(room) && isHost && !calculatingRef.current) {
-          calculatingRef.current = true;
-          setCurrentRoom(room);
-          setLoading(true);
-          setLoadingMessage("All votes in — AI judges are calculating results...");
-          try {
-            await writeContract("calculate_results", [code]);
+        // ── Completed: navigate everyone to results ──
+        // NOTE: check this BEFORE the round_2 block so a rejoined
+        // non-host who missed the calculate step still gets results.
+        if (room.status === "completed") {
+          if (cs !== "results") {
             const freshRaw = await readContract("get_room", [code]);
-            if (freshRaw) {
-              const freshRoom = JSON.parse(freshRaw as string);
-              setCurrentRoom(freshRoom);
-              stopPolling();
-              setScreen("results");
-            }
-          } catch (err: any) {
-            console.error("calculate_results failed:", err?.message);
-            calculatingRef.current = false; // allow retry next poll
-          } finally {
-            setLoading(false);
-            setLoadingMessage("");
+            const finalRoom = freshRaw ? JSON.parse(freshRaw as string) : room;
+            setCurrentRoom(finalRoom);
+            setWaitingForResults(false);
+            stopPolling();
+            setScreen("results");
           }
           return;
         }
 
-        // Non-host: all votes in, waiting for host to calculate
-        // Show the manual refresh fallback UI after votes are all in
-        if (room.status === "round_2" && allVotesIn(room) && !isHost && !calculatingRef.current) {
-          setManualRefreshRoom(code);
-          setWaitingForResults(true);
+        // ── Round 2 logic ──
+        if (room.status === "round_2") {
+          // Keep UI in sync (render voting screen or "voted, waiting" screen)
           setCurrentRoom(room);
+
+          if (allVotesIn(room) && !calculatingRef.current) {
+            // Record when we first noticed all votes were in
+            if (!allVotesDetectedAt) allVotesDetectedAt = Date.now();
+
+            const elapsed = Date.now() - (allVotesDetectedAt ?? Date.now());
+            // HOST fires immediately. Any player can step up after the timeout
+            // — this handles host network dropout without killing the game.
+            const shouldCalculate = isHost || elapsed >= CALCULATE_TIMEOUT_MS;
+
+            if (shouldCalculate) {
+              calculatingRef.current = true;
+              setLoading(true);
+              setLoadingMessage(
+                isHost
+                  ? "All votes in — AI judges are calculating results..."
+                  : "Host seems offline — stepping up to calculate results..."
+              );
+              setWaitingForResults(false);
+              try {
+                await writeContract("calculate_results", [code]);
+                const freshRaw = await readContract("get_room", [code]);
+                if (freshRaw) {
+                  const freshRoom = JSON.parse(freshRaw as string);
+                  setCurrentRoom(freshRoom);
+                  stopPolling();
+                  setScreen("results");
+                }
+              } catch (err: any) {
+                console.error("calculate_results failed:", err?.message);
+                calculatingRef.current = false;
+                allVotesDetectedAt = null; // reset so fallback retries
+              } finally {
+                setLoading(false);
+                setLoadingMessage("");
+              }
+              return;
+            }
+
+            // Not host, timer hasn't elapsed yet — show waiting overlay
+            const secondsLeft = Math.ceil((CALCULATE_TIMEOUT_MS - elapsed) / 1000);
+            setManualRefreshRoom(code);
+            setWaitingForResults(true);
+            setWaitingSecondsLeft(secondsLeft);
+          } else if (!allVotesIn(room)) {
+            // Votes still coming in — hide waiting overlay if shown
+            allVotesDetectedAt = null;
+            setWaitingForResults(false);
+          }
           return;
         }
 
-        // Non-host: detect completed and navigate to results
-        if (room.status === "completed" && cs !== "results") {
-          const freshRaw = await readContract("get_room", [code]);
-          const finalRoom = freshRaw ? JSON.parse(freshRaw as string) : room;
-          setCurrentRoom(finalRoom);
-          setWaitingForResults(false);
-          stopPolling();
-          setScreen("results");
-          return;
-        }
-
-        // Default: keep room state fresh
+        // Default: keep room state fresh (lobby, round_1)
         setCurrentRoom(room);
       } catch (err) {
         console.error("Poll error:", err);
@@ -522,27 +564,47 @@ export default function HotTakeProtocol() {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
-  // Manual refresh for non-host players stuck on waiting screen
+  // Manual refresh / step-up for non-host players
+  // If all votes are in and status is still round_2, this player triggers calculate_results.
   const manualRefreshResults = async () => {
-    if (!manualRefreshRoom) return;
+    const code = manualRefreshRoom || roomCode;
+    if (!code) return;
     setLoading(true);
     setLoadingMessage("Checking for results...");
     try {
-      const raw = await readContract("get_room", [manualRefreshRoom]);
-      if (raw) {
-        const room = JSON.parse(raw as string) as Room;
-        if (room.status === "completed" && room.results?.final_scores) {
-          setCurrentRoom(room);
-          setWaitingForResults(false);
+      const raw = await readContract("get_room", [code]);
+      if (!raw) return;
+      const room = JSON.parse(raw as string) as Room;
+
+      if (room.status === "completed" && room.results?.final_scores) {
+        setCurrentRoom(room);
+        setWaitingForResults(false);
+        stopPolling();
+        setScreen("results");
+        return;
+      }
+
+      // If all votes are in but still round_2, step up and trigger calculate_results
+      if (room.status === "round_2" && allVotesIn(room) && !calculatingRef.current) {
+        calculatingRef.current = true;
+        setLoadingMessage("Stepping up — AI judges calculating results...");
+        setWaitingForResults(false);
+        await writeContract("calculate_results", [code]);
+        const freshRaw = await readContract("get_room", [code]);
+        if (freshRaw) {
+          const freshRoom = JSON.parse(freshRaw as string);
+          setCurrentRoom(freshRoom);
           stopPolling();
           setScreen("results");
-        } else {
-          // Still waiting — update room state
-          setCurrentRoom(room);
         }
+        return;
       }
+
+      // Votes still coming in — just update state
+      setCurrentRoom(room);
     } catch (err: any) {
-      console.error("Manual refresh failed:", err?.message);
+      console.error("manualRefreshResults failed:", err?.message);
+      calculatingRef.current = false;
     } finally {
       setLoading(false);
       setLoadingMessage("");
@@ -742,18 +804,24 @@ export default function HotTakeProtocol() {
             </div>
             <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.5rem" }}>All votes are in!</div>
             <div style={{ color: C.muted, fontSize: "0.85rem", marginBottom: "0.75rem" }}>
-              The host's AI judges are calculating final results. This takes 60–90 seconds on GenLayer studionet.
+              Waiting for the host to trigger AI judging...
             </div>
-            <div style={{ fontSize: "0.8rem", color: C.fire, fontStyle: "italic" }}>
-              {AI_TIPS[tipIdx]}
-            </div>
+            {waitingSecondsLeft > 0 ? (
+              <div style={{ fontSize: "0.82rem", color: C.fire }}>
+                If host is offline, you can step up in <strong>{waitingSecondsLeft}s</strong>
+              </div>
+            ) : (
+              <div style={{ fontSize: "0.82rem", color: C.secondary, fontWeight: 700 }}>
+                ✓ You can now trigger results yourself
+              </div>
+            )}
           </div>
-          <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
-            This screen will update automatically. If it doesn't after a while, tap Refresh below.
+          <div style={{ color: C.muted, fontSize: "0.8rem", marginBottom: "1rem" }}>
+            {AI_TIPS[tipIdx]}
           </div>
-          <button className="btn-primary" onClick={manualRefreshResults} disabled={loading}
+          <button className="btn-outline" onClick={manualRefreshResults} disabled={loading}
             style={{ width: "100%", marginBottom: "0.65rem" }}>
-            🔄 Refresh Results
+            🔄 Check for Results
           </button>
           <button className="btn-outline" onClick={goHome} style={{ width: "100%", fontSize: "0.85rem", padding: "0.7rem" }}>
             ← Back to Home
