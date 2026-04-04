@@ -783,7 +783,12 @@ export default function HotTakeProtocol() {
         <div className="card" style={{ textAlign: "center", minWidth: 320, maxWidth: 420 }}>
           <div className="spin" style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔥</div>
           <div style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: "0.4rem" }}>{loadingMessage || "Loading..."}</div>
-          <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1.25rem" }}>Do not close this tab</div>
+          <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "0.5rem" }}>Do not close this tab</div>
+          {(loadingMessage.includes("AI") || loadingMessage.includes("scenario") || loadingMessage.includes("calculating") || loadingMessage.includes("bot")) && (
+            <div style={{ fontSize: "0.75rem", color: C.muted, marginBottom: "1rem", padding: "0.5rem 0.75rem", background: `${C.gold}10`, borderRadius: 8, border: `1px solid ${C.gold}20` }}>
+              ⏱ GenLayer runs 5+ AI validators in consensus — results take 30-90s by design. Faster than any human jury!
+            </div>
+          )}
           <div style={{
             background: `${C.primary}08`, border: `1px solid ${C.primary}20`,
             borderRadius: 10, padding: "0.75rem 1rem",
@@ -1101,24 +1106,59 @@ export default function HotTakeProtocol() {
                     </div>
                   )}
                 </>
-              ) : (
-                <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✅</div>
-                  <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div>
-                  <div style={{ color: C.muted, marginBottom: "1.5rem" }}>Waiting for other players...</div>
-                  <div className="pulse" style={{ color: C.fire, fontSize: "0.9rem", marginBottom: "1.25rem" }}>
-                    {currentRoom.players.filter((p) =>
-                      Object.keys(currentRoom.submissions).some((k) => k.startsWith(p.address))
-                    ).length}/{currentRoom.players.length} submitted
+              ) : (() => {
+                const submittedCount = currentRoom.players.filter((p) =>
+                  Object.keys(currentRoom.submissions).some((k) => k.startsWith(p.address))
+                ).length;
+                const totalCount = currentRoom.players.length;
+                const allIn = submittedCount >= totalCount;
+                return (
+                  <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+                    {allIn ? (
+                      <>
+                        <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔥</div>
+                        <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.5rem" }}>All Takes Are In!</div>
+                        <div style={{ color: C.muted, fontSize: "0.88rem", marginBottom: "1.5rem" }}>
+                          The debate floor is set. Launching voting round...
+                        </div>
+                        <div style={{ border: `2px solid ${C.primary}30`, background: `${C.primary}06`, borderRadius: 12, padding: "1.25rem", marginBottom: "1.25rem" }}>
+                          <div style={{ fontWeight: 700, color: C.primary, marginBottom: "0.4rem" }}>Heads up!</div>
+                          <div style={{ color: C.muted, fontSize: "0.82rem" }}>
+                            The voting screen is loading — this takes a moment on GenLayer.
+                            Do not close your tab. You will be moved automatically.
+                          </div>
+                        </div>
+                        <div className="ai-dots" style={{ display: "flex", justifyContent: "center" }}><span /><span /><span /></div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>✅</div>
+                        <div style={{ fontWeight: 700, fontSize: "1.25rem", marginBottom: "0.75rem" }}>Take Submitted!</div>
+                        <div style={{ color: C.muted, marginBottom: "1rem" }}>Waiting for other players...</div>
+                        <div style={{ marginBottom: "1.5rem" }}>
+                          {currentRoom.players.map((p) => {
+                            const submitted = Object.keys(currentRoom.submissions).some((k) => k.startsWith(p.address));
+                            return (
+                              <div key={p.address} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.4rem 0", borderBottom: `1px solid ${C.border}` }}>
+                                <span style={{ fontSize: "0.88rem" }}>{p.name}{p.address === playerAddress ? " (you)" : ""}</span>
+                                {submitted
+                                  ? <span className="voted-chip">✓ Submitted</span>
+                                  : <span className="pending-chip">Writing...</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {mySubmission && (
+                          <div style={{ textAlign: "left", padding: "0.85rem 1rem", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                            <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: "0.3rem" }}>Your take:</div>
+                            <div style={{ fontStyle: "italic", fontSize: "0.88rem" }}>&ldquo;{mySubmission[1]?.take}&rdquo;</div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
-                  {mySubmission && (
-                    <div style={{ textAlign: "left", padding: "0.85rem 1rem", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                      <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: "0.3rem" }}>Your take:</div>
-                      <div style={{ fontStyle: "italic", fontSize: "0.88rem" }}>&ldquo;{mySubmission[1]?.take}&rdquo;</div>
-                    </div>
-                  )}
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
 
@@ -1211,13 +1251,32 @@ export default function HotTakeProtocol() {
                     ))}
                   </div>
 
-                  <div style={{ border: `2px solid ${C.purple}30`, background: `${C.purple}06`, borderRadius: 12, padding: "1.5rem" }}>
-                    <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Waiting for all players to vote...</div>
-                    <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
-                      Once everyone votes, AI judges will evaluate all takes and calculate final scores.
-                    </div>
-                    <div className="ai-dots"><span /><span /><span /></div>
-                  </div>
+                  {(() => {
+                    const humanPlayers = currentRoom.players.filter((p) => !p.address.startsWith("bot_"));
+                    const allVoted = humanPlayers.every((p) => currentRoom.votes[p.address]);
+                    return allVoted ? (
+                      <div style={{ border: `2px solid ${C.fire}40`, background: `${C.fire}06`, borderRadius: 12, padding: "1.5rem" }}>
+                        <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>🤖⚖️</div>
+                        <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire }}>AI Judges Are Working!</div>
+                        <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
+                          All votes are in. The AI panel is now evaluating every take and writing
+                          personalised reasoning. This takes 60-90 seconds on GenLayer — hang tight!
+                        </div>
+                        <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: "1rem", fontStyle: "italic" }}>
+                          {AI_TIPS[tipIdx]}
+                        </div>
+                        <div className="ai-dots"><span /><span /><span /></div>
+                      </div>
+                    ) : (
+                      <div style={{ border: `2px solid ${C.purple}30`, background: `${C.purple}06`, borderRadius: 12, padding: "1.5rem" }}>
+                        <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Waiting for all players to vote...</div>
+                        <div style={{ color: C.muted, fontSize: "0.82rem", marginBottom: "1rem" }}>
+                          Once everyone votes, AI judges will evaluate all takes and calculate final scores.
+                        </div>
+                        <div className="ai-dots"><span /><span /><span /></div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </>
@@ -1308,13 +1367,35 @@ export default function HotTakeProtocol() {
                   <div key={key} style={{ marginBottom: "1.25rem" }}>
                     <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>{sc?.title || key}</div>
                     {Array.isArray(rankings) && rankings.map((r: any) => {
-                      const pn = currentRoom.players.find((p) => p.address === r.player)?.name || r.player?.slice(0, 8) + "...";
+                      // Fuzzy match: contract may store truncated address in r.player
+                      const matched = currentRoom.players.find((p) =>
+                        p.address === r.player ||
+                        p.address.startsWith(r.player) ||
+                        r.player.startsWith(p.address.slice(0, 12))
+                      );
+                      const pn = matched?.name || r.player?.slice(0, 8) + "...";
+                      const isBot = matched?.address?.startsWith("bot_") || false;
+                      const scenarioIdx = parseInt(key.replace("scenario_", ""));
+                      const theirTake = matched
+                        ? (Object.values(currentRoom.submissions) as any[]).find(
+                            (s: any) => (s.player === matched.address || matched.address.startsWith(s.player)) && s.scenario_index === scenarioIdx
+                          )
+                        : null;
                       return (
-                        <div key={r.player} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 0.85rem", background: C.bg, borderRadius: 8, marginBottom: "0.5rem" }}>
-                          <div style={{ color: r.rank === 1 ? C.gold : C.muted, fontWeight: 700, minWidth: 24 }}>#{r.rank}</div>
+                        <div key={r.player} style={{ display: "flex", gap: "0.75rem", padding: "0.85rem 1rem", background: C.bg, borderRadius: 10, marginBottom: "0.6rem", border: `1px solid ${r.rank === 1 ? C.gold + "40" : C.border}` }}>
+                          <div style={{ color: r.rank === 1 ? C.gold : C.muted, fontWeight: 800, minWidth: 28, fontSize: "1rem" }}>#{r.rank}</div>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>{pn} · <span style={{ color: C.muted, fontWeight: 400 }}>{r.score}pts</span></div>
-                            <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: "0.2rem" }}>{r.reasoning}</div>
+                            <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.2rem" }}>
+                              {isBot && <span style={{ marginRight: "0.3rem" }}>🤖</span>}
+                              {pn}
+                              <span style={{ color: C.muted, fontWeight: 400, marginLeft: "0.5rem", fontSize: "0.85rem" }}>{r.score}pts</span>
+                            </div>
+                            {theirTake && (
+                              <div style={{ fontSize: "0.78rem", color: C.fire, fontStyle: "italic", marginBottom: "0.35rem" }}>
+                                &ldquo;{theirTake.take?.slice(0, 90)}{theirTake.take?.length > 90 ? "..." : ""}&rdquo;
+                              </div>
+                            )}
+                            <div style={{ color: C.muted, fontSize: "0.82rem" }}>{r.reasoning}</div>
                           </div>
                         </div>
                       );
