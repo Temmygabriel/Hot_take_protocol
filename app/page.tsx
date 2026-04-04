@@ -141,6 +141,13 @@ function allVotesIn(room: Room): boolean {
 let allVotesDetectedAt: number | null = null;
 const CALCULATE_TIMEOUT_MS = 30_000; // 30 seconds grace period for host
 
+// Timestamp (ms) when we first detected all takes were submitted in round_1.
+// If after ADVANCE_TIMEOUT_MS the host hasn't called advance_to_voting,
+// any player can step up — prevents game stall when someone never submits
+// (host can also manually force-advance via the UI button).
+let allSubmittedDetectedAt: number | null = null;
+const ADVANCE_TIMEOUT_MS = 60_000; // 60 seconds before any player can step up
+
 // ============================================
 // COLORS
 // ============================================
@@ -352,6 +359,8 @@ export default function HotTakeProtocol() {
   const playerAddressRef = useRef<string>("");
   // Prevents duplicate calculate_results calls — only host triggers it, once
   const calculatingRef = useRef(false);
+  // Prevents duplicate advance_to_voting calls — host triggers once when all submitted
+  const advancingRef = useRef(false);
   // Prevents duplicate generate_bot_takes calls
   const generatingBotsRef = useRef(false);
 
@@ -410,6 +419,7 @@ export default function HotTakeProtocol() {
     if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
     pollRoomCodeRef.current = "";
     calculatingRef.current = false;
+    advancingRef.current = false;
     generatingBotsRef.current = false;
   }, []);
 
@@ -426,6 +436,7 @@ export default function HotTakeProtocol() {
     setManualRefreshRoom("");
     setWaitingSecondsLeft(30);
     allVotesDetectedAt = null;
+    allSubmittedDetectedAt = null;
   }, [stopPolling]);
 
   // ─────────────────────────────────────────────────────────
@@ -442,8 +453,10 @@ export default function HotTakeProtocol() {
     stopPolling();
     pollRoomCodeRef.current = code;
     calculatingRef.current = false;
+    advancingRef.current = false;
     generatingBotsRef.current = false;
     allVotesDetectedAt = null;
+    allSubmittedDetectedAt = null;
 
     const interval = setInterval(async () => {
       if (pollRoomCodeRef.current !== code) return;
@@ -463,6 +476,46 @@ export default function HotTakeProtocol() {
           setCurrentRoom(room);
           setScreen("game");
           return;
+        }
+
+        // ── ROUND 1: detect all-submitted → host (or fallback) calls advance_to_voting ──
+        if (room.status === "round_1" && cs === "game" && !advancingRef.current) {
+          const allSubmitted = room.players.every((p: Player) =>
+            Object.keys(room.submissions).some((k) => k.startsWith(p.address))
+          );
+          if (allSubmitted) {
+            if (!allSubmittedDetectedAt) allSubmittedDetectedAt = Date.now();
+            const elapsed = Date.now() - (allSubmittedDetectedAt ?? Date.now());
+            const isHost = room.host === myAddr;
+            const shouldAdvance = isHost || elapsed >= ADVANCE_TIMEOUT_MS;
+            if (shouldAdvance) {
+              advancingRef.current = true;
+              setLoading(true);
+              setLoadingMessage(
+                isHost
+                  ? "All takes in — advancing to voting round..."
+                  : "Host offline — stepping up to advance game..."
+              );
+              try {
+                await writeContract("advance_to_voting", [code]);
+                const freshRaw = await readContract("get_room", [code]);
+                if (freshRaw && pollRoomCodeRef.current === code) {
+                  setCurrentRoom(JSON.parse(freshRaw as string));
+                }
+              } catch (err: any) {
+                console.error("advance_to_voting failed:", err?.message);
+                advancingRef.current = false;
+                allSubmittedDetectedAt = null;
+              } finally {
+                setLoading(false);
+                setLoadingMessage("");
+              }
+              return;
+            }
+            // Not host, timer hasn't elapsed — keep room fresh so UI shows countdown
+          } else {
+            allSubmittedDetectedAt = null;
+          }
         }
 
         // ── SOLO BOT TAKES: trigger generate_bot_takes once in background ──
@@ -709,16 +762,9 @@ export default function HotTakeProtocol() {
       if (raw) {
         const room = JSON.parse(raw as string) as Room;
         setCurrentRoom(room);
-        // If all players submitted → advance to voting
-        const allSubmitted = room.players.every((p: Player) =>
-          Object.keys(room.submissions).some((key) => key.startsWith(p.address))
-        );
-        if (allSubmitted && room.status === "round_1") {
-          setLoadingMessage("All takes in — advancing to voting...");
-          await writeContract("advance_to_voting", [currentRoom.room_code]);
-          const updatedRaw = await readContract("get_room", [currentRoom.room_code]);
-          if (updatedRaw) setCurrentRoom(JSON.parse(updatedRaw as string));
-        }
+        // NOTE: advance_to_voting is now triggered by the polling loop
+        // (host fires when all submitted, non-host fallback after ADVANCE_TIMEOUT_MS).
+        // This prevents the old bug where the last submitter's tx failure = everyone stuck.
       }
     } catch (err: any) { alert(`Failed to submit take: ${err.message}`); }
     finally { setLoading(false); setLoadingMessage(""); }
@@ -1148,6 +1194,36 @@ export default function HotTakeProtocol() {
                             );
                           })}
                         </div>
+                        {/* Host force-advance button — lets host skip a player who isn't submitting */}
+                        {currentRoom.host === playerAddress && (
+                          <div style={{ marginBottom: "1.25rem" }}>
+                            <button
+                              className="btn-outline"
+                              style={{ width: "100%", fontSize: "0.85rem", padding: "0.75rem", borderColor: C.fire, color: C.fire }}
+                              disabled={loading}
+                              onClick={async () => {
+                                setLoading(true);
+                                setLoadingMessage("Force-advancing to voting...");
+                                try {
+                                  advancingRef.current = true;
+                                  await writeContract("advance_to_voting", [currentRoom.room_code]);
+                                  const raw2 = await readContract("get_room", [currentRoom.room_code]);
+                                  if (raw2) setCurrentRoom(JSON.parse(raw2 as string));
+                                } catch (e: any) {
+                                  advancingRef.current = false;
+                                  alert(`Failed: ${e.message}`);
+                                } finally {
+                                  setLoading(false);
+                                  setLoadingMessage("");
+                                }
+                              }}>
+                              ⏩ Skip & Advance to Voting (Host Only)
+                            </button>
+                            <div style={{ fontSize: "0.75rem", color: C.muted, marginTop: "0.4rem" }}>
+                              Use this if someone is taking too long or disconnected.
+                            </div>
+                          </div>
+                        )}
                         {mySubmission && (
                           <div style={{ textAlign: "left", padding: "0.85rem 1rem", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
                             <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: "0.3rem" }}>Your take:</div>
@@ -1362,7 +1438,8 @@ export default function HotTakeProtocol() {
               <div style={{ fontWeight: 700, marginBottom: "1rem" }}>🤖 AI Judge Reasoning</div>
               {Object.entries(ai_rankings).map(([key, rankings]: [string, any]) => {
                 const idx = parseInt(key.replace("scenario_", ""));
-                const sc = currentRoom.scenarios[idx];
+                // Find by scenario.id, NOT array index — IDs may not match position
+                const sc = currentRoom.scenarios.find((s) => s.id === idx) || currentRoom.scenarios[idx];
                 return (
                   <div key={key} style={{ marginBottom: "1.25rem" }}>
                     <div style={{ fontWeight: 700, marginBottom: "0.5rem", color: C.fire, fontSize: "0.9rem" }}>{sc?.title || key}</div>
@@ -1395,7 +1472,11 @@ export default function HotTakeProtocol() {
                                 &ldquo;{theirTake.take?.slice(0, 90)}{theirTake.take?.length > 90 ? "..." : ""}&rdquo;
                               </div>
                             )}
-                            <div style={{ color: C.muted, fontSize: "0.82rem" }}>{r.reasoning}</div>
+                            <div style={{ color: C.muted, fontSize: "0.82rem" }}>
+                              {r.reasoning === "AI evaluation unavailable - fallback score."
+                                ? "⚠️ AI consensus timed out for this round — scores are equal. Try a rematch!"
+                                : r.reasoning}
+                            </div>
                           </div>
                         </div>
                       );
