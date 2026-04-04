@@ -527,6 +527,11 @@ export default function HotTakeProtocol() {
                   setCurrentRoom(freshRoom);
                   stopPolling();
                   setScreen("results");
+                  // Fire finalize_game in background (saves stats/history).
+                  // Non-blocking — results page shows immediately, stats update behind the scenes.
+                  writeContract("finalize_game", [code]).catch((e) =>
+                    console.warn("finalize_game failed (non-critical):", e?.message)
+                  );
                 }
               } catch (err: any) {
                 console.error("calculate_results failed:", err?.message);
@@ -596,6 +601,9 @@ export default function HotTakeProtocol() {
           setCurrentRoom(freshRoom);
           stopPolling();
           setScreen("results");
+          writeContract("finalize_game", [code]).catch((e) =>
+            console.warn("finalize_game failed (non-critical):", e?.message)
+          );
         }
         return;
       }
