@@ -574,34 +574,34 @@ export default function HotTakeProtocol() {
               setWaitingForResults(false);
               try {
                 await writeContract("calculate_results", [code]);
-                const freshRaw = await readContract("get_room", [code]);
-                if (freshRaw) {
-                  const freshRoom = JSON.parse(freshRaw as string);
-                  setCurrentRoom(freshRoom);
-                  stopPolling();
-                  setScreen("results");
-                  // Fire finalize_game in background (saves stats/history).
-                  // Non-blocking — results page shows immediately, stats update behind the scenes.
-                  writeContract("finalize_game", [code]).catch((e) =>
-                    console.warn("finalize_game failed (non-critical):", e?.message)
-                  );
-                }
+                // DO NOT stop polling here. Just let the "completed" check above
+                // handle navigation on the next poll tick. This prevents the case
+                // where calculate_results succeeds but the room hasn't flipped to
+                // "completed" yet — if we stop polling now the player is stuck forever.
+                // calculatingRef stays true so we don't double-fire.
+                setLoading(false);
+                setLoadingMessage("");
+                writeContract("finalize_game", [code]).catch((e) =>
+                  console.warn("finalize_game failed (non-critical):", e?.message)
+                );
               } catch (err: any) {
                 console.error("calculate_results failed:", err?.message);
                 calculatingRef.current = false;
                 allVotesDetectedAt = null; // reset so fallback retries
-              } finally {
                 setLoading(false);
                 setLoadingMessage("");
               }
               return;
             }
 
-            // Not host, timer hasn't elapsed yet — show waiting overlay
-            const secondsLeft = Math.ceil((CALCULATE_TIMEOUT_MS - elapsed) / 1000);
-            setManualRefreshRoom(code);
-            setWaitingForResults(true);
-            setWaitingSecondsLeft(secondsLeft);
+            // Not host, timer hasn't elapsed yet — show waiting overlay ONLY if player already voted
+            const myVotedAlready = !!(room.votes[myAddr]);
+            if (myVotedAlready) {
+              const secondsLeft = Math.ceil((CALCULATE_TIMEOUT_MS - elapsed) / 1000);
+              setManualRefreshRoom(code);
+              setWaitingForResults(true);
+              setWaitingSecondsLeft(secondsLeft);
+            }
           } else if (!allVotesIn(room)) {
             // Votes still coming in — hide waiting overlay if shown
             allVotesDetectedAt = null;
@@ -648,16 +648,11 @@ export default function HotTakeProtocol() {
         setLoadingMessage("Stepping up — AI judges calculating results...");
         setWaitingForResults(false);
         await writeContract("calculate_results", [code]);
-        const freshRaw = await readContract("get_room", [code]);
-        if (freshRaw) {
-          const freshRoom = JSON.parse(freshRaw as string);
-          setCurrentRoom(freshRoom);
-          stopPolling();
-          setScreen("results");
-          writeContract("finalize_game", [code]).catch((e) =>
-            console.warn("finalize_game failed (non-critical):", e?.message)
-          );
-        }
+        // Don't stop polling — let the "completed" check in the polling loop
+        // handle navigation. The room may not be "completed" immediately after the tx.
+        writeContract("finalize_game", [code]).catch((e) =>
+          console.warn("finalize_game failed (non-critical):", e?.message)
+        );
         return;
       }
 
