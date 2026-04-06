@@ -1,13 +1,9 @@
 // Hot Take Protocol - GenLayer Contract Utils
 // v1.0
 // All contract calls centralised here
-
-import {
-  createClient,
-  createAccount,
-  TransactionStatus,
-  simulator,
-} from "genlayer-js";
+import { createClient, createAccount } from "genlayer-js";
+import { studionet } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
 
@@ -16,7 +12,7 @@ let _client: ReturnType<typeof createClient> | null = null;
 
 export function getClient() {
   if (!_client) {
-    _client = createClient({ network: simulator });
+    _client = createClient({ chain: studionet });
   }
   return _client;
 }
@@ -40,7 +36,7 @@ export async function writeContract(
     args,
     account,
     leaderOnly: false,
-  });
+  } as any);
   await client.waitForTransactionReceipt({
     hash,
     status: TransactionStatus.ACCEPTED,
@@ -58,16 +54,12 @@ export async function writeContractWithReturn(
   args: unknown[]
 ): Promise<string> {
   const client = getClient();
-
   // Simulate first to get return value
   const simResult = await client.simulateWriteContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
     args,
-    account,
-    leaderOnly: false,
   });
-
   // Then actually write
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,
@@ -75,15 +67,13 @@ export async function writeContractWithReturn(
     args,
     account,
     leaderOnly: false,
-  });
-
+  } as any);
   await client.waitForTransactionReceipt({
     hash,
     status: TransactionStatus.ACCEPTED,
     retries: 120,
     interval: 4000,
   });
-
   return simResult as string;
 }
 
@@ -106,7 +96,6 @@ export async function readContract(
 // --------------------------------------------------------------------------
 // Convenience wrappers
 // --------------------------------------------------------------------------
-
 export async function getRoom(roomCode: string) {
   const raw = await readContract("get_room", [roomCode]);
   return JSON.parse(raw);
