@@ -5,7 +5,7 @@
 // all contract write calls, and passing handlers down to screen components.
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Screen, Room, Stance, AppState } from "../types";
+import { Screen, Room, Stance } from "../types";
 import {
   makeAccount,
   writeContract,
@@ -50,7 +50,7 @@ export default function HotTakeProtocol() {
   const advancingRef = useRef(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Module-level timestamps for fallback timers
+  // Timestamps for fallback timers
   const allSubmittedAtRef = useRef<number>(0);
   const allVotesAtRef = useRef<number>(0);
 
@@ -68,7 +68,6 @@ export default function HotTakeProtocol() {
       localStorage.setItem("htp_address", addr);
     }
     if (savedName) setPlayerName(savedName);
-    // Always make a fresh account object for signing
     if (!accountRef.current) {
       accountRef.current = makeAccount();
     }
@@ -107,7 +106,7 @@ export default function HotTakeProtocol() {
 
         try {
           const data: Room = await getRoom(pollRoomCodeRef.current);
-          if (data.error) return;
+          if (!data || !data.code) return;
           setRoom(data);
 
           const myAddr = playerAddressRef.current;
@@ -135,7 +134,6 @@ export default function HotTakeProtocol() {
               setScreen("round1_waiting");
             }
 
-            // Advance to voting when all submitted
             if (allHumanSubmitted && !advancingRef.current) {
               if (allSubmittedAtRef.current === 0) {
                 allSubmittedAtRef.current = Date.now();
@@ -206,7 +204,6 @@ export default function HotTakeProtocol() {
         }
       };
 
-      // Poll immediately then on interval
       poll();
       pollTimerRef.current = setInterval(poll, POLL_INTERVAL);
     },
@@ -218,9 +215,7 @@ export default function HotTakeProtocol() {
     return () => stopPolling();
   }, [stopPolling]);
 
-  // ---- Handlers ----
-
-  // Create name input state (used by create/join screens inline)
+  // ---- Helpers ----
   function getAccount() {
     if (!accountRef.current) {
       accountRef.current = makeAccount();
@@ -230,6 +225,7 @@ export default function HotTakeProtocol() {
     return accountRef.current;
   }
 
+  // ---- Handlers ----
   async function handleCreateRoom(name: string) {
     if (!name.trim()) return;
     setLoading("Creating room...");
@@ -250,7 +246,7 @@ export default function HotTakeProtocol() {
       allSubmittedAtRef.current = 0;
       allVotesAtRef.current = 0;
       startPolling(code);
-    } catch (e) {
+    } catch {
       setError("Failed to create room. Try again.");
     } finally {
       setLoading("");
@@ -325,7 +321,6 @@ export default function HotTakeProtocol() {
     const acc = getAccount();
     try {
       await writeContract(acc, "start_game", [roomCode, acc.address]);
-      // Polling detects the status change
     } catch {
       setError("Could not start game.");
     } finally {
@@ -408,7 +403,7 @@ export default function HotTakeProtocol() {
   const isHost = room ? room.host === playerAddress : false;
   const isSolo = room?.is_solo ?? false;
 
-  // ---- Create/Join inline screens (simple forms) ----
+  // ---- Inline form state ----
   const [formName, setFormName] = useState(playerName || "");
   const [joinCode, setJoinCode] = useState("");
 
