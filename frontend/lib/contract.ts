@@ -2,17 +2,21 @@
 // v1.0
 // All contract calls centralised here
 import { createClient, createAccount } from "genlayer-js";
-import { studionet } from "genlayer-js/chains";
+import { simulator } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
+const GENLAYER_RPC = process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com:8443/api";
 
 // Singleton client
 let _client: ReturnType<typeof createClient> | null = null;
 
 export function getClient() {
   if (!_client) {
-    _client = createClient({ chain: studionet });
+    _client = createClient({
+      chain: simulator,
+      endpoint: GENLAYER_RPC,
+    });
   }
   return _client;
 }
@@ -21,9 +25,6 @@ export function makeAccount() {
   return createAccount();
 }
 
-// --------------------------------------------------------------------------
-// Write contract - standard (no return value needed)
-// --------------------------------------------------------------------------
 export async function writeContract(
   account: ReturnType<typeof createAccount>,
   method: string,
@@ -45,22 +46,17 @@ export async function writeContract(
   });
 }
 
-// --------------------------------------------------------------------------
-// Write contract with return value (create_room, create_solo_room)
-// --------------------------------------------------------------------------
 export async function writeContractWithReturn(
   account: ReturnType<typeof createAccount>,
   method: string,
   args: unknown[]
 ): Promise<string> {
   const client = getClient();
-  // Simulate first to get return value
   const simResult = await client.simulateWriteContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
     args,
   });
-  // Then actually write
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
@@ -77,9 +73,6 @@ export async function writeContractWithReturn(
   return simResult as string;
 }
 
-// --------------------------------------------------------------------------
-// Read contract - instant
-// --------------------------------------------------------------------------
 export async function readContract(
   method: string,
   args: unknown[]
@@ -93,9 +86,6 @@ export async function readContract(
   return result as string;
 }
 
-// --------------------------------------------------------------------------
-// Convenience wrappers
-// --------------------------------------------------------------------------
 export async function getRoom(roomCode: string) {
   const raw = await readContract("get_room", [roomCode]);
   return JSON.parse(raw);
