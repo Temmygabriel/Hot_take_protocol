@@ -61,10 +61,10 @@ export default function RejoinScreen({ playerAddress, onRejoin, onBack }: Rejoin
         ← Back
       </button>
 
-      <h2 className="screen-title">Rejoin or Review</h2>
-      <p className="screen-sub">
-        Enter a room code to jump back into a live game or check final results.
-      </p>
+     <h2 className="screen-title">Check Game Status</h2>
+<p className="screen-sub">
+  Enter a room code to check a live game, view results, or jump back in.
+</p>
 
       <div className="lookup-form">
         <input
