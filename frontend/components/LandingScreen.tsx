@@ -1,7 +1,4 @@
 "use client";
-// Hot Take Protocol - Landing Screen
-// v1.0
-
 import { Screen } from "../types";
 
 interface LandingProps {
@@ -10,75 +7,46 @@ interface LandingProps {
   soloLoading: boolean;
 }
 
-const STANCES = [
-  { emoji: "🔥", label: "Genius", color: "#F97316" },
-  { emoji: "🗑️", label: "Trash", color: "#6B7280" },
-  { emoji: "😈", label: "Spicy", color: "#A855F7" },
-];
-
 export default function LandingScreen({ onNavigate, onSolo, soloLoading }: LandingProps) {
   return (
     <div className="landing">
       <div className="landing-hero">
-        <div className="landing-badge">GenLayer Playverse 2026</div>
+        <div className="landing-badge">🔥 GenLayer Playverse 2026</div>
         <h1 className="landing-title">
-          Hot Take<br />Protocol
+          HOT TAKE<br />
+          <span className="highlight">PROTOCOL</span>
         </h1>
         <p className="landing-sub">
           Write your hottest take. Let AI be the judge.<br />
-          Prove your opinions are worth something.
+          The spiciest argument wins.
         </p>
-
         <div className="stance-pills">
-          {STANCES.map((s) => (
-            <span key={s.label} className="stance-pill" style={{ "--accent": s.color } as React.CSSProperties}>
-              {s.emoji} {s.label}
-            </span>
-          ))}
+          <span className="stance-pill">🔥 Genius</span>
+          <span className="stance-pill">🗑️ Trash</span>
+          <span className="stance-pill">😈 Spicy</span>
         </div>
       </div>
 
       <div className="landing-actions">
-        <button
-          className="btn-primary"
-          onClick={() => onNavigate("create")}
-        >
+        <button className="btn-primary" onClick={() => onNavigate("create")}>
           Create Room
         </button>
-        <button
-          className="btn-secondary"
-          onClick={() => onNavigate("join")}
-        >
+        <button className="btn-secondary" onClick={() => onNavigate("join")}>
           Join Room
         </button>
-        <button
-          className="btn-solo"
-          onClick={onSolo}
-          disabled={soloLoading}
-        >
+        <button className="btn-solo" onClick={onSolo} disabled={soloLoading}>
           {soloLoading ? (
-            <span className="btn-loading">
-              <span className="spinner" />
-              Setting up arena...
-            </span>
-          ) : (
-            "⚡ Solo Arena"
-          )}
+            <span className="btn-loading"><span className="spinner" />Setting up arena...</span>
+          ) : "⚡ Solo Arena — Play vs AI Bots"}
         </button>
       </div>
 
       <div className="landing-footer">
-        <button
-          className="footer-link"
-          onClick={() => onNavigate("rejoin")}
-        >
-          Rejoin or Review
+        <button className="footer-link" onClick={() => onNavigate("rejoin")}>
+          Check Game Status
         </button>
         <span className="footer-divider">·</span>
-        <button
-          className="footer-link"
-          onClick={() => onNavigate("leaderboard")}
-        >
+        <button className="footer-link" onClick={() => onNavigate("leaderboard")}>
           Leaderboard
         </button>
       </div>
