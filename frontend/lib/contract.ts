@@ -1,24 +1,15 @@
 // Hot Take Protocol - GenLayer Contract Utils
 // v1.0
-// All contract calls centralised here
 import { createClient, createAccount } from "genlayer-js";
-import { simulator } from "genlayer-js/chains";
+import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
-const GENLAYER_RPC = process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com:8443/api";
 
-// Singleton client
-let _client: ReturnType<typeof createClient> | null = null;
-
-export function getClient() {
-  if (!_client) {
-    _client = createClient({
-      chain: simulator,
-      endpoint: GENLAYER_RPC,
-    });
-  }
-  return _client;
+function makeClient() {
+  const account = createAccount();
+  const client = createClient({ chain: studionet, account });
+  return { client, account };
 }
 
 export function makeAccount() {
@@ -30,7 +21,7 @@ export async function writeContract(
   method: string,
   args: unknown[]
 ): Promise<void> {
-  const client = getClient();
+  const { client } = makeClient();
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
@@ -51,7 +42,7 @@ export async function writeContractWithReturn(
   method: string,
   args: unknown[]
 ): Promise<string> {
-  const client = getClient();
+  const { client } = makeClient();
   const simResult = await client.simulateWriteContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
@@ -77,7 +68,7 @@ export async function readContract(
   method: string,
   args: unknown[]
 ): Promise<string> {
-  const client = getClient();
+  const { client } = makeClient();
   const result = await client.readContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
