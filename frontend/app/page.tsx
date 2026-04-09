@@ -226,7 +226,7 @@ export default function HotTakeProtocol() {
   }
 
   // ---- Handlers ----
-  async function handleCreateRoom(name: string) {
+ async function handleCreateRoom(name: string) {
     if (!name.trim()) return;
     setLoading("Creating room...");
     setError("");
@@ -238,6 +238,7 @@ export default function HotTakeProtocol() {
         acc.address,
         name,
       ]);
+      console.log("1. Room created, code:", code);
       setRoomCode(code);
       setSubmitted(false);
       setVoted(false);
@@ -245,8 +246,11 @@ export default function HotTakeProtocol() {
       calculatingRef.current = false;
       allSubmittedAtRef.current = 0;
       allVotesAtRef.current = 0;
+      console.log("2. About to call startPolling");
       startPolling(code);
-    } catch {
+      console.log("3. startPolling called, screen should change");
+    } catch (e: any) {
+      console.error("handleCreateRoom failed:", e?.message, e);
       setError("Failed to create room. Try again.");
     } finally {
       setLoading("");
