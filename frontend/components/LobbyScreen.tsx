@@ -1,6 +1,5 @@
 "use client";
-// Hot Take Protocol - Lobby Screen
-// v1.0
+// Hot Take Protocol - Lobby Screen v1.0
 
 import { Room } from "../types";
 
@@ -24,17 +23,16 @@ export default function LobbyScreen({
   const players = Object.values(room.players);
   const me = room.players[playerAddress];
   const allReady = players.every((p) => p.ready);
-  const canStart = isHost && players.length >= 2 && allReady;
+  const canStart = isHost && players.length >= 3 && allReady;
 
   return (
-    <div className="screen">
+    <div className="screen fadeIn">
       <div className="room-code-banner">
         <span className="rcode-label">Room Code</span>
         <span className="rcode-value">{room.code}</span>
         <button
           className="rcode-copy"
           onClick={() => navigator.clipboard.writeText(room.code)}
-          title="Copy code"
         >
           Copy
         </button>
@@ -64,13 +62,10 @@ export default function LobbyScreen({
             </span>
           </div>
         ))}
-
         {players.length < 5 && (
           <div className="player-row player-row--empty">
-            <div className="player-avatar player-avatar--empty">?</div>
-            <span className="player-name" style={{ color: "var(--text-muted)" }}>
-              Waiting for player...
-            </span>
+            <div className="player-avatar" style={{ background: "#EDF2F7" }}>?</div>
+            <span className="player-name" style={{ color: "#A0AEC0" }}>Waiting for player...</span>
           </div>
         )}
       </div>
@@ -78,11 +73,11 @@ export default function LobbyScreen({
       <div className="lobby-actions">
         {!isHost && (
           <button
-            className={`btn-ready ${me?.ready ? "btn-ready--unready" : "btn-ready--ready"}`}
+            className={me?.ready ? "btn-ready--ready" : "btn-ready--unready"}
             onClick={onToggleReady}
             disabled={!!loading}
           >
-            {loading ? "..." : me?.ready ? "Not Ready" : "Ready Up"}
+            {loading ? "..." : me?.ready ? "✓ Ready!" : "Mark Ready"}
           </button>
         )}
 
@@ -91,26 +86,24 @@ export default function LobbyScreen({
             className="btn-primary"
             onClick={onStartGame}
             disabled={!canStart || !!loading}
-            title={!canStart ? "Need at least 2 players, all ready" : ""}
           >
             {loading ? (
-              <span className="btn-loading">
-                <span className="spinner" />
-                Starting game...
-              </span>
-            ) : (
-              `Start Game (${players.length} players)`
-            )}
+              <span className="btn-loading"><span className="spinner" />Starting game...</span>
+            ) : `🚀 Start Game (${players.length} players)`}
           </button>
         )}
       </div>
 
       {isHost && !canStart && (
         <p className="hint-text">
-          {players.length < 2
-            ? "Need at least 2 players to start"
+          {players.length < 3
+            ? `Need at least 3 players to start (${players.length}/3)`
             : "Waiting for all players to ready up"}
         </p>
+      )}
+
+      {!isHost && (
+        <p className="hint-text pulse">⏳ Waiting for host to start the game...</p>
       )}
     </div>
   );
