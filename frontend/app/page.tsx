@@ -1,8 +1,5 @@
 "use client";
-// Hot Take Protocol - Main Orchestrator
-// v1.0
-// This file manages: screen routing, player identity, polling engine,
-// all contract write calls, and passing handlers down to screen components.
+// Hot Take Protocol - Main Orchestrator v1.0
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Screen, Room, Stance } from "../types";
@@ -21,17 +18,11 @@ import ResultsScreen from "../components/ResultsScreen";
 import RejoinScreen from "../components/RejoinScreen";
 import LeaderboardScreen from "../components/LeaderboardScreen";
 
-// --------------------------------------------------------------------------
-// Polling config
-// --------------------------------------------------------------------------
 const POLL_INTERVAL = 3000;
-
-// Fallback timers (ms)
-const ADVANCE_FALLBACK = 60_000;   // 60s after all submitted, any player can advance
-const CALC_FALLBACK = 30_000;      // 30s after all voted, any player can calculate
+const ADVANCE_FALLBACK = 60_000;
+const CALC_FALLBACK = 30_000;
 
 export default function HotTakeProtocol() {
-  // ---- State ----
   const [screen, setScreen] = useState<Screen>("landing");
   const [room, setRoom] = useState<Room | null>(null);
   const [roomCode, setRoomCode] = useState("");
@@ -41,7 +32,6 @@ export default function HotTakeProtocol() {
   const [submitted, setSubmitted] = useState(false);
   const [voted, setVoted] = useState(false);
 
-  // ---- Refs for stale closure safety ----
   const accountRef = useRef<ReturnType<typeof makeAccount> | null>(null);
   const playerAddressRef = useRef<string>("");
   const screenRef = useRef<Screen>("landing");
@@ -49,12 +39,9 @@ export default function HotTakeProtocol() {
   const calculatingRef = useRef(false);
   const advancingRef = useRef(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Timestamps for fallback timers
   const allSubmittedAtRef = useRef<number>(0);
   const allVotesAtRef = useRef<number>(0);
 
-  // ---- Init: restore identity from localStorage ----
   useEffect(() => {
     const saved = localStorage.getItem("htp_address");
     const savedName = localStorage.getItem("htp_name");
@@ -63,9 +50,8 @@ export default function HotTakeProtocol() {
     } else {
       const acc = makeAccount();
       accountRef.current = acc;
-      const addr = acc.address;
-      playerAddressRef.current = addr;
-      localStorage.setItem("htp_address", addr);
+      playerAddressRef.current = acc.address;
+      localStorage.setItem("htp_address", acc.address);
     }
     if (savedName) setPlayerName(savedName);
     if (!accountRef.current) {
@@ -73,12 +59,8 @@ export default function HotTakeProtocol() {
     }
   }, []);
 
-  // Keep screenRef in sync
-  useEffect(() => {
-    screenRef.current = screen;
-  }, [screen]);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
 
-  // ---- Polling Engine ----
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -86,136 +68,72 @@ export default function HotTakeProtocol() {
     }
   }, []);
 
-  const startPolling = useCallback(
-    (code: string) => {
-      stopPolling();
-      pollRoomCodeRef.current = code;
+  const startPolling = useCallback((code: string) => {
+    stopPolling();
+    pollRoomCodeRef.current = code;
 
-      const poll = async () => {
-        if (!pollRoomCodeRef.current) return;
-        if (
-          ![
-            "lobby",
-            "round1",
-            "round1_waiting",
-            "round2",
-            "round2_waiting",
-          ].includes(screenRef.current)
-        )
+    const poll = async () => {
+      if (!pollRoomCodeRef.current) return;
+      if (!["lobby","round1","round1_waiting","round2","round2_waiting"].includes(screenRef.current)) return;
+
+      try {
+        const data: Room = await getRoom(pollRoomCodeRef.current);
+        if (!data || !data.code) return;
+        setRoom(data);
+
+        const myAddr = playerAddressRef.current;
+        const isHost = data.host === myAddr;
+        const humanPlayers = Object.keys(data.players).filter((id) => !id.startsWith("bot_"));
+
+        if (data.status === "lobby") { setScreen("lobby"); return; }
+
+        if (data.status === "round_1") {
+          const humanSubmitted = humanPlayers.filter((id) => data.submissions[id]).length;
+          const allHumanSubmitted = humanSubmitted === humanPlayers.length;
+          if (!data.submissions[myAddr]) { setScreen("round1"); } else { setScreen("round1_waiting"); }
+          if (allHumanSubmitted && !advancingRef.current) {
+            if (allSubmittedAtRef.current === 0) allSubmittedAtRef.current = Date.now();
+            const elapsed = Date.now() - allSubmittedAtRef.current;
+            if (isHost || elapsed > ADVANCE_FALLBACK) {
+              advancingRef.current = true;
+              try { await writeContract(accountRef.current!, "advance_to_voting", [pollRoomCodeRef.current]); }
+              catch { advancingRef.current = false; }
+            }
+          }
           return;
-
-        try {
-          const data: Room = await getRoom(pollRoomCodeRef.current);
-          if (!data || !data.code) return;
-          setRoom(data);
-
-          const myAddr = playerAddressRef.current;
-          const isHost = data.host === myAddr;
-          const humanPlayers = Object.keys(data.players).filter(
-            (id) => !id.startsWith("bot_")
-          );
-
-          // ---- LOBBY ----
-          if (data.status === "lobby") {
-            setScreen("lobby");
-            return;
-          }
-
-          // ---- ROUND 1 ----
-          if (data.status === "round_1") {
-            const humanSubmitted = humanPlayers.filter(
-              (id) => data.submissions[id]
-            ).length;
-            const allHumanSubmitted = humanSubmitted === humanPlayers.length;
-
-            if (!data.submissions[myAddr]) {
-              setScreen("round1");
-            } else {
-              setScreen("round1_waiting");
-            }
-
-            if (allHumanSubmitted && !advancingRef.current) {
-              if (allSubmittedAtRef.current === 0) {
-                allSubmittedAtRef.current = Date.now();
-              }
-
-              const elapsed = Date.now() - allSubmittedAtRef.current;
-              const shouldAdvance = isHost || elapsed > ADVANCE_FALLBACK;
-
-              if (shouldAdvance) {
-                advancingRef.current = true;
-                try {
-                  await writeContract(accountRef.current!, "advance_to_voting", [
-                    pollRoomCodeRef.current,
-                  ]);
-                } catch {
-                  advancingRef.current = false;
-                }
-              }
-            }
-            return;
-          }
-
-          // ---- ROUND 2 ----
-          if (data.status === "round_2") {
-            allSubmittedAtRef.current = 0;
-
-            const humanVotes = humanPlayers.filter((id) => data.votes[id]).length;
-            const allVoted = humanVotes === humanPlayers.length;
-
-            if (!data.votes[myAddr]) {
-              setScreen("round2");
-            } else {
-              setScreen("round2_waiting");
-            }
-
-            if (allVoted && !calculatingRef.current) {
-              if (allVotesAtRef.current === 0) {
-                allVotesAtRef.current = Date.now();
-              }
-
-              const elapsed = Date.now() - allVotesAtRef.current;
-              const shouldCalc = isHost || elapsed > CALC_FALLBACK;
-
-              if (shouldCalc) {
-                calculatingRef.current = true;
-                try {
-                  await writeContract(
-                    accountRef.current!,
-                    "calculate_results",
-                    [pollRoomCodeRef.current]
-                  );
-                } catch {
-                  calculatingRef.current = false;
-                }
-              }
-            }
-            return;
-          }
-
-          // ---- COMPLETED ----
-          if (data.status === "completed") {
-            allVotesAtRef.current = 0;
-            stopPolling();
-            setScreen("results");
-          }
-        } catch {
-          // Network blip - just wait for next poll
         }
-      };
 
-      poll();
-      pollTimerRef.current = setInterval(poll, POLL_INTERVAL);
-    },
-    [stopPolling]
-  );
+        if (data.status === "round_2") {
+          allSubmittedAtRef.current = 0;
+          const humanVotes = humanPlayers.filter((id) => data.votes[id]).length;
+          const allVoted = humanVotes === humanPlayers.length;
+          if (!data.votes[myAddr]) { setScreen("round2"); } else { setScreen("round2_waiting"); }
+          if (allVoted && !calculatingRef.current) {
+            if (allVotesAtRef.current === 0) allVotesAtRef.current = Date.now();
+            const elapsed = Date.now() - allVotesAtRef.current;
+            if (isHost || elapsed > CALC_FALLBACK) {
+              calculatingRef.current = true;
+              try { await writeContract(accountRef.current!, "calculate_results", [pollRoomCodeRef.current]); }
+              catch { calculatingRef.current = false; }
+            }
+          }
+          return;
+        }
 
-  // Clean up polling on unmount
-  useEffect(() => {
-    return () => stopPolling();
+        if (data.status === "completed") {
+          allVotesAtRef.current = 0;
+          stopPolling();
+          setScreen("results");
+        }
+      } catch { /* Network blip */ }
+    };
+
+    poll();
+    pollTimerRef.current = setInterval(poll, POLL_INTERVAL);
   }, [stopPolling]);
 
-  // ---- Helpers ----
+  useEffect(() => { return () => stopPolling(); }, [stopPolling]);
+
   function getAccount() {
     if (!accountRef.current) {
       accountRef.current = makeAccount();
@@ -225,7 +143,6 @@ export default function HotTakeProtocol() {
     return accountRef.current;
   }
 
-  // ---- Handlers ----
   async function handleCreateRoom(name: string) {
     if (!name.trim()) return;
     setLoading("Creating room...");
@@ -234,25 +151,17 @@ export default function HotTakeProtocol() {
     localStorage.setItem("htp_name", name);
     setPlayerName(name);
     try {
-      const code = await writeContractWithReturn(acc, "create_room", [
-        acc.address,
-        name,
-      ]);
+      const code = await writeContractWithReturn(acc, "create_room", [acc.address, name]);
       setRoomCode(code);
-      setSubmitted(false);
-      setVoted(false);
-      advancingRef.current = false;
-      calculatingRef.current = false;
-      allSubmittedAtRef.current = 0;
-      allVotesAtRef.current = 0;
+      setSubmitted(false); setVoted(false);
+      advancingRef.current = false; calculatingRef.current = false;
+      allSubmittedAtRef.current = 0; allVotesAtRef.current = 0;
       setScreen("lobby");
       startPolling(code);
     } catch (e: any) {
       console.error("handleCreateRoom failed:", e?.message, e);
       setError("Failed to create room. Try again.");
-    } finally {
-      setLoading("");
-    }
+    } finally { setLoading(""); }
   }
 
   async function handleJoinRoom(code: string, name: string) {
@@ -265,95 +174,63 @@ export default function HotTakeProtocol() {
     try {
       await writeContract(acc, "join_room", [code.toUpperCase(), acc.address, name]);
       setRoomCode(code.toUpperCase());
-      setSubmitted(false);
-      setVoted(false);
-      advancingRef.current = false;
-      calculatingRef.current = false;
-      allSubmittedAtRef.current = 0;
-      allVotesAtRef.current = 0;
+      setSubmitted(false); setVoted(false);
+      advancingRef.current = false; calculatingRef.current = false;
+      allSubmittedAtRef.current = 0; allVotesAtRef.current = 0;
       setScreen("lobby");
       startPolling(code.toUpperCase());
     } catch {
       setError("Could not join room. Check the code.");
-    } finally {
-      setLoading("");
-    }
+    } finally { setLoading(""); }
   }
 
-  async function handleSoloArena() {
-    const name = playerName || "Player";
+  async function handleSoloArena(name: string) {
+    const playerN = name || playerName || "Player";
     setLoading("Setting up Solo Arena...");
     setError("");
     const acc = getAccount();
+    localStorage.setItem("htp_name", playerN);
+    setPlayerName(playerN);
     try {
-      const code = await writeContractWithReturn(acc, "create_solo_room", [
-        acc.address,
-        name,
-      ]);
+      const code = await writeContractWithReturn(acc, "create_solo_room", [acc.address, playerN]);
       setRoomCode(code);
-      setSubmitted(false);
-      setVoted(false);
-      advancingRef.current = false;
-      calculatingRef.current = false;
-      allSubmittedAtRef.current = 0;
-      allVotesAtRef.current = 0;
+      setSubmitted(false); setVoted(false);
+      advancingRef.current = false; calculatingRef.current = false;
+      allSubmittedAtRef.current = 0; allVotesAtRef.current = 0;
       setScreen("round1");
       startPolling(code);
     } catch {
       setError("Failed to start Solo Arena. Try again.");
-    } finally {
-      setLoading("");
-    }
+    } finally { setLoading(""); }
   }
 
   async function handleToggleReady() {
     if (!roomCode) return;
     setLoading("Updating...");
     const acc = getAccount();
-    try {
-      await writeContract(acc, "toggle_ready", [roomCode, acc.address]);
-    } catch {
-      // silent - polling will sync
-    } finally {
-      setLoading("");
-    }
+    try { await writeContract(acc, "toggle_ready", [roomCode, acc.address]); }
+    catch { /* silent */ }
+    finally { setLoading(""); }
   }
 
   async function handleStartGame() {
     if (!roomCode) return;
     setLoading("Starting game...");
     const acc = getAccount();
-    try {
-      await writeContract(acc, "start_game", [roomCode, acc.address]);
-    } catch {
-      setError("Could not start game.");
-    } finally {
-      setLoading("");
-    }
+    try { await writeContract(acc, "start_game", [roomCode, acc.address]); }
+    catch { setError("Could not start game."); }
+    finally { setLoading(""); }
   }
 
-  async function handleSubmitTake(
-    scenarioId: number,
-    stance: Stance,
-    take: string
-  ) {
+  async function handleSubmitTake(scenarioId: number, stance: Stance, take: string) {
     if (!roomCode) return;
     setLoading("Submitting take...");
     const acc = getAccount();
     try {
-      await writeContract(acc, "submit_take", [
-        roomCode,
-        acc.address,
-        scenarioId,
-        stance,
-        take,
-      ]);
+      await writeContract(acc, "submit_take", [roomCode, acc.address, scenarioId, stance, take]);
       setSubmitted(true);
-    } catch {
-      setError("Could not submit take.");
-    } finally {
-      setLoading("");
-    }
+    } catch { setError("Could not submit take."); }
+    finally { setLoading(""); }
   }
 
   async function handleSubmitVotes(votes: Record<string, number>) {
@@ -361,17 +238,10 @@ export default function HotTakeProtocol() {
     setLoading("Submitting votes...");
     const acc = getAccount();
     try {
-      await writeContract(acc, "submit_votes", [
-        roomCode,
-        acc.address,
-        JSON.stringify(votes),
-      ]);
+      await writeContract(acc, "submit_votes", [roomCode, acc.address, JSON.stringify(votes)]);
       setVoted(true);
-    } catch {
-      setError("Could not submit votes.");
-    } finally {
-      setLoading("");
-    }
+    } catch { setError("Could not submit votes."); }
+    finally { setLoading(""); }
   }
 
   function handleRejoin(rejoinedRoom: Room, code: string) {
@@ -379,122 +249,38 @@ export default function HotTakeProtocol() {
     setRoomCode(code);
     setSubmitted(!!rejoinedRoom.submissions[playerAddressRef.current]);
     setVoted(!!rejoinedRoom.votes[playerAddressRef.current]);
-    advancingRef.current = false;
-    calculatingRef.current = false;
-    allSubmittedAtRef.current = 0;
-    allVotesAtRef.current = 0;
-
-    if (rejoinedRoom.status === "completed") {
-      stopPolling();
-      setScreen("results");
-    } else if (rejoinedRoom.status === "round_1") {
-      setScreen("round1");
-      startPolling(code);
-    } else if (rejoinedRoom.status === "round_2") {
-      setScreen("round2");
-      startPolling(code);
-    } else {
-      setScreen("lobby");
-      startPolling(code);
-    }
+    advancingRef.current = false; calculatingRef.current = false;
+    allSubmittedAtRef.current = 0; allVotesAtRef.current = 0;
+    if (rejoinedRoom.status === "completed") { stopPolling(); setScreen("results"); }
+    else if (rejoinedRoom.status === "round_1") { setScreen("round1"); startPolling(code); }
+    else if (rejoinedRoom.status === "round_2") { setScreen("round2"); startPolling(code); }
+    else { setScreen("lobby"); startPolling(code); }
   }
 
   function handlePlayAgain() {
     stopPolling();
-    setRoom(null);
-    setRoomCode("");
-    setSubmitted(false);
-    setVoted(false);
-    setError("");
+    setRoom(null); setRoomCode(""); setSubmitted(false); setVoted(false); setError("");
     setScreen("landing");
   }
 
-  // ---- Derived values ----
   const playerAddress = playerAddressRef.current;
   const isHost = room ? room.host === playerAddress : false;
-  const isSolo = room?.is_solo ?? false;
 
-  // ---- Inline form state ----
-  const [formName, setFormName] = useState(playerName || "");
-  const [joinCode, setJoinCode] = useState("");
-
-  // ---- Render ----
   const renderScreen = () => {
     switch (screen) {
       case "landing":
         return (
           <LandingScreen
             onNavigate={setScreen}
+            onCreateRoom={handleCreateRoom}
+            onJoinRoom={handleJoinRoom}
             onSolo={handleSoloArena}
             soloLoading={loading === "Setting up Solo Arena..."}
+            createLoading={loading === "Creating room..."}
+            joinLoading={loading === "Joining room..."}
+            error={error}
           />
         );
-
-      case "create":
-        return (
-          <div className="screen">
-            <button className="back-btn" onClick={() => setScreen("landing")}>← Back</button>
-            <h2 className="screen-title">Create a Room</h2>
-            <p className="screen-sub">You will be the host. Share the room code with friends.</p>
-            <label className="field-label">Your name</label>
-            <input
-              className="text-input"
-              type="text"
-              placeholder="What should we call you?"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value.slice(0, 20))}
-              maxLength={20}
-            />
-            <button
-              className="btn-primary"
-              onClick={() => handleCreateRoom(formName)}
-              disabled={!!loading || formName.trim().length < 2}
-            >
-              {loading ? (
-                <span className="btn-loading"><span className="spinner" />Creating...</span>
-              ) : "Create Room"}
-            </button>
-            {error && <p className="error-text">{error}</p>}
-          </div>
-        );
-
-      case "join":
-        return (
-          <div className="screen">
-            <button className="back-btn" onClick={() => setScreen("landing")}>← Back</button>
-            <h2 className="screen-title">Join a Room</h2>
-            <p className="screen-sub">Enter the 6-character room code from your host.</p>
-            <label className="field-label">Room code</label>
-            <input
-              className="text-input code-input"
-              type="text"
-              placeholder="e.g. ABX42K"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
-              maxLength={6}
-            />
-            <label className="field-label">Your name</label>
-            <input
-              className="text-input"
-              type="text"
-              placeholder="What should we call you?"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value.slice(0, 20))}
-              maxLength={20}
-            />
-            <button
-              className="btn-primary"
-              onClick={() => handleJoinRoom(joinCode, formName)}
-              disabled={!!loading || joinCode.length < 6 || formName.trim().length < 2}
-            >
-              {loading ? (
-                <span className="btn-loading"><span className="spinner" />Joining...</span>
-              ) : "Join Room"}
-            </button>
-            {error && <p className="error-text">{error}</p>}
-          </div>
-        );
-
       case "lobby":
         if (!room) return null;
         return (
@@ -507,7 +293,6 @@ export default function HotTakeProtocol() {
             loading={loading}
           />
         );
-
       case "round1":
       case "round1_waiting":
         if (!room) return null;
@@ -520,7 +305,6 @@ export default function HotTakeProtocol() {
             submitted={submitted}
           />
         );
-
       case "round2":
       case "round2_waiting":
         if (!room) return null;
@@ -533,7 +317,6 @@ export default function HotTakeProtocol() {
             voted={voted}
           />
         );
-
       case "results":
         if (!room) return null;
         return (
@@ -544,7 +327,6 @@ export default function HotTakeProtocol() {
             onHome={handlePlayAgain}
           />
         );
-
       case "rejoin":
         return (
           <RejoinScreen
@@ -553,7 +335,6 @@ export default function HotTakeProtocol() {
             onBack={() => setScreen("landing")}
           />
         );
-
       case "leaderboard":
         return (
           <LeaderboardScreen
@@ -561,7 +342,6 @@ export default function HotTakeProtocol() {
             onBack={() => setScreen("landing")}
           />
         );
-
       default:
         return null;
     }
