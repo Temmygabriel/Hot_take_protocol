@@ -32,6 +32,8 @@ export default function HotTakeProtocol() {
   const [submitted, setSubmitted] = useState(false);
   const [voted, setVoted] = useState(false);
 
+  // accountRef holds the SAME account object for the entire session
+  // private key is persisted to localStorage so it survives page refreshes
   const accountRef = useRef<ReturnType<typeof makeAccount> | null>(null);
   const playerAddressRef = useRef<string>("");
   const screenRef = useRef<Screen>("landing");
@@ -43,20 +45,25 @@ export default function HotTakeProtocol() {
   const allVotesAtRef = useRef<number>(0);
 
   useEffect(() => {
-    const saved = localStorage.getItem("htp_address");
+    // Restore or create account — persist private key so address stays the same
+    const savedKey = localStorage.getItem("htp_private_key");
     const savedName = localStorage.getItem("htp_name");
-    if (saved) {
-      playerAddressRef.current = saved;
+
+    let acc: ReturnType<typeof makeAccount>;
+    if (savedKey) {
+      // Recreate account from saved private key
+      acc = makeAccount(savedKey as `0x${string}`);
     } else {
-      const acc = makeAccount();
-      accountRef.current = acc;
-      playerAddressRef.current = acc.address;
-      localStorage.setItem("htp_address", acc.address);
+      // First visit — create new account and save the private key
+      acc = makeAccount();
+      localStorage.setItem("htp_private_key", acc.privateKey);
     }
+
+    accountRef.current = acc;
+    playerAddressRef.current = acc.address;
+    localStorage.setItem("htp_address", acc.address);
+
     if (savedName) setPlayerName(savedName);
-    if (!accountRef.current) {
-      accountRef.current = makeAccount();
-    }
   }, []);
 
   useEffect(() => { screenRef.current = screen; }, [screen]);
@@ -136,7 +143,14 @@ export default function HotTakeProtocol() {
 
   function getAccount() {
     if (!accountRef.current) {
-      accountRef.current = makeAccount();
+      // Fallback — should not happen after useEffect but just in case
+      const savedKey = localStorage.getItem("htp_private_key");
+      if (savedKey) {
+        accountRef.current = makeAccount(savedKey as `0x${string}`);
+      } else {
+        accountRef.current = makeAccount();
+        localStorage.setItem("htp_private_key", accountRef.current.privateKey);
+      }
       playerAddressRef.current = accountRef.current.address;
       localStorage.setItem("htp_address", playerAddressRef.current);
     }
@@ -281,9 +295,8 @@ export default function HotTakeProtocol() {
             error={error}
           />
         );
-     case "lobby":
+      case "lobby":
         if (!room) return null;
-        console.log("LOBBY DEBUG — playerAddress:", playerAddress, "| room.host:", room.host, "| isHost:", isHost);
         return (
           <LobbyScreen
             room={room}
