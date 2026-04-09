@@ -281,8 +281,9 @@ export default function HotTakeProtocol() {
             error={error}
           />
         );
-      case "lobby":
+     case "lobby":
         if (!room) return null;
+        console.log("LOBBY DEBUG — playerAddress:", playerAddress, "| room.host:", room.host, "| isHost:", isHost);
         return (
           <LobbyScreen
             room={room}
