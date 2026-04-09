@@ -1,6 +1,5 @@
 // Hot Take Protocol - GenLayer Contract Utils
 // v1.0
-// Matches original working single-file pattern exactly
 
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
@@ -9,20 +8,16 @@ import { TransactionStatus } from "genlayer-js/types";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
 const MAX_ATTEMPTS = 3;
 
-// Mirrors original working page.tsx exactly — fresh client per call, account baked in
-function makeClient() {
-  const account = createAccount();
-  const client = createClient({ chain: studionet, account });
-  return { client, account };
+// Pass account in — never generate a random one for write calls
+function makeClient(account: ReturnType<typeof createAccount>) {
+  return createClient({ chain: studionet, account });
 }
 
-export function makeAccount() {
-  return createAccount();
+// Accept optional private key so the same account can be restored from localStorage
+export function makeAccount(privateKey?: `0x${string}`) {
+  return createAccount(privateKey);
 }
 
-// --------------------------------------------------------------------------
-// Write contract - standard (no return value needed)
-// --------------------------------------------------------------------------
 export async function writeContract(
   account: ReturnType<typeof createAccount>,
   method: string,
@@ -30,7 +25,7 @@ export async function writeContract(
 ): Promise<void> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const { client } = makeClient();
+      const client = makeClient(account);
       console.log(`writeContract attempt ${attempt}/${MAX_ATTEMPTS}: ${method}`);
       const hash = await client.writeContract({
         address: CONTRACT_ADDRESS,
@@ -58,9 +53,6 @@ export async function writeContract(
   }
 }
 
-// --------------------------------------------------------------------------
-// Write contract with return value (create_room, create_solo_room)
-// --------------------------------------------------------------------------
 export async function writeContractWithReturn(
   account: ReturnType<typeof createAccount>,
   method: string,
@@ -68,7 +60,7 @@ export async function writeContractWithReturn(
 ): Promise<string> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const { client } = makeClient();
+      const client = makeClient(account);
       console.log(`writeContractWithReturn attempt ${attempt}/${MAX_ATTEMPTS}: ${method}`);
       const returnValue = await client.simulateWriteContract({
         address: CONTRACT_ADDRESS,
@@ -102,15 +94,13 @@ export async function writeContractWithReturn(
   throw new Error("All attempts failed");
 }
 
-// --------------------------------------------------------------------------
-// Read contract - instant view calls
-// --------------------------------------------------------------------------
 export async function readContract(
   method: string,
   args: unknown[]
 ): Promise<string> {
-  const { client } = makeClient();
-  console.log(`readContract: ${method}`);
+  // Read calls don't need a persistent account
+  const account = createAccount();
+  const client = makeClient(account);
   const result = await client.readContract({
     address: CONTRACT_ADDRESS,
     functionName: method,
@@ -119,9 +109,6 @@ export async function readContract(
   return result as string;
 }
 
-// --------------------------------------------------------------------------
-// Convenience wrappers
-// --------------------------------------------------------------------------
 export async function getRoom(roomCode: string) {
   const raw = await readContract("get_room", [roomCode]);
   return JSON.parse(raw);
