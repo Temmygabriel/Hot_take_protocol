@@ -22,27 +22,38 @@ export default function LobbyScreen({
 }: LobbyProps) {
   const players = Object.values(room.players);
   const me = room.players[playerAddress];
+  const isSolo = room.is_solo;
   const allReady = players.every((p) => p.ready);
-  const canStart = isHost && players.length >= 3 && allReady;
+  const canStart = isHost && players.length >= (isSolo ? 1 : 3) && allReady;
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(room.code);
+    alert("Room code copied!");
+  };
 
   return (
     <div className="screen fadeIn">
-      <div className="room-code-banner">
-        <span className="rcode-label">Room Code</span>
-        <span className="rcode-value">{room.code}</span>
-        <button
-          className="rcode-copy"
-          onClick={() => navigator.clipboard.writeText(room.code)}
-        >
-          Copy
-        </button>
+      {/* Header row */}
+      <div className="lobby-header">
+        <div>
+          <div className="lobby-title">{isSolo ? "SOLO ARENA" : "LOBBY"}</div>
+          <div className="lobby-meta">
+            Room: <strong style={{ letterSpacing: "0.08em" }}>{room.code}</strong>
+          </div>
+        </div>
+        <div className="lobby-header-actions">
+          {!isSolo && (
+            <button className="btn-outline" onClick={copyCode} style={{ width: "auto", padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
+              📋 Copy Code
+            </button>
+          )}
+        </div>
       </div>
 
-      <h2 className="screen-title">Waiting for players</h2>
-      <p className="screen-sub">
-        {players.length}/5 players · {isHost ? "You are the host" : "Waiting for host to start"}
-      </p>
-
+      {/* Player list */}
+      <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+        Players ({players.length}/5)
+      </div>
       <div className="player-list">
         {players.map((p) => (
           <div
@@ -50,28 +61,38 @@ export default function LobbyScreen({
             className={`player-row ${p.address === playerAddress ? "player-row--me" : ""}`}
           >
             <div className="player-avatar">
-              {p.name.charAt(0).toUpperCase()}
+              {p.address.startsWith("bot_") ? "🤖" : p.name.charAt(0).toUpperCase()}
             </div>
-            <span className="player-name">
-              {p.name}
-              {p.address === playerAddress && " (you)"}
-              {p.address === room.host && " 👑"}
-            </span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                {p.name}
+                {p.address === room.host && (
+                  <span style={{ color: "#FF6D00", marginLeft: "0.4rem", fontSize: "0.78rem" }}>👑 HOST</span>
+                )}
+                {p.address === playerAddress && (
+                  <span style={{ color: "#718096", marginLeft: "0.4rem", fontSize: "0.75rem" }}>(you)</span>
+                )}
+              </div>
+              <div style={{ color: "#A0AEC0", fontSize: "0.75rem" }}>
+                {p.address.startsWith("bot_") ? "AI Bot" : p.address.slice(0, 12) + "..."}
+              </div>
+            </div>
             <span className={`ready-badge ${p.ready ? "ready-badge--yes" : "ready-badge--no"}`}>
-              {p.ready ? "Ready" : "Not ready"}
+              {p.ready ? "✓ READY" : "Waiting..."}
             </span>
           </div>
         ))}
         {players.length < 5 && (
           <div className="player-row player-row--empty">
-            <div className="player-avatar" style={{ background: "#EDF2F7" }}>?</div>
-            <span className="player-name" style={{ color: "#A0AEC0" }}>Waiting for player...</span>
+            <div className="player-avatar">?</div>
+            <span style={{ color: "#A0AEC0", fontSize: "0.9rem" }}>Waiting for player...</span>
           </div>
         )}
       </div>
 
+      {/* Ready / Start actions */}
       <div className="lobby-actions">
-        {!isHost && (
+        {!isHost && !isSolo && (
           <button
             className={me?.ready ? "btn-ready--ready" : "btn-ready--unready"}
             onClick={onToggleReady}
@@ -88,8 +109,10 @@ export default function LobbyScreen({
             disabled={!canStart || !!loading}
           >
             {loading ? (
-              <span className="btn-loading"><span className="spinner" />Starting game...</span>
-            ) : `🚀 Start Game (${players.length} players)`}
+              <span className="btn-loading"><span className="spinner" />Starting...</span>
+            ) : (
+              `🚀 START GAME`
+            )}
           </button>
         )}
       </div>
