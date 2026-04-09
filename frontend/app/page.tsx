@@ -226,7 +226,7 @@ export default function HotTakeProtocol() {
   }
 
   // ---- Handlers ----
- async function handleCreateRoom(name: string) {
+  async function handleCreateRoom(name: string) {
     if (!name.trim()) return;
     setLoading("Creating room...");
     setError("");
@@ -238,7 +238,6 @@ export default function HotTakeProtocol() {
         acc.address,
         name,
       ]);
-      console.log("1. Room created, code:", code);
       setRoomCode(code);
       setSubmitted(false);
       setVoted(false);
@@ -246,9 +245,8 @@ export default function HotTakeProtocol() {
       calculatingRef.current = false;
       allSubmittedAtRef.current = 0;
       allVotesAtRef.current = 0;
-      console.log("2. About to call startPolling");
+      setScreen("lobby");
       startPolling(code);
-      console.log("3. startPolling called, screen should change");
     } catch (e: any) {
       console.error("handleCreateRoom failed:", e?.message, e);
       setError("Failed to create room. Try again.");
@@ -273,6 +271,7 @@ export default function HotTakeProtocol() {
       calculatingRef.current = false;
       allSubmittedAtRef.current = 0;
       allVotesAtRef.current = 0;
+      setScreen("lobby");
       startPolling(code.toUpperCase());
     } catch {
       setError("Could not join room. Check the code.");
@@ -298,6 +297,7 @@ export default function HotTakeProtocol() {
       calculatingRef.current = false;
       allSubmittedAtRef.current = 0;
       allVotesAtRef.current = 0;
+      setScreen("round1");
       startPolling(code);
     } catch {
       setError("Failed to start Solo Arena. Try again.");
@@ -387,7 +387,14 @@ export default function HotTakeProtocol() {
     if (rejoinedRoom.status === "completed") {
       stopPolling();
       setScreen("results");
+    } else if (rejoinedRoom.status === "round_1") {
+      setScreen("round1");
+      startPolling(code);
+    } else if (rejoinedRoom.status === "round_2") {
+      setScreen("round2");
+      startPolling(code);
     } else {
+      setScreen("lobby");
       startPolling(code);
     }
   }
