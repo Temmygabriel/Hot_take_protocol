@@ -1,6 +1,5 @@
 "use client";
-// Hot Take Protocol - Round 2 Voting Screen
-// v1.0
+// Hot Take Protocol - Round 2 Voting Screen v1.0
 
 import { useState } from "react";
 import { Room, Submission } from "../types";
@@ -15,15 +14,8 @@ interface Round2Props {
 
 const STANCE_DISPLAY = {
   genius: { emoji: "🔥", label: "Genius" },
-  trash: { emoji: "🗑️", label: "Trash" },
-  spicy: { emoji: "😈", label: "Spicy" },
-};
-
-const VOTE_OPTIONS = [1, 2, 3];
-const VOTE_LABELS: Record<number, string> = {
-  1: "Weak",
-  2: "Decent",
-  3: "Fire",
+  trash:  { emoji: "🗑️", label: "Trash" },
+  spicy:  { emoji: "😈", label: "Spicy" },
 };
 
 export default function Round2Screen({
@@ -33,14 +25,33 @@ export default function Round2Screen({
   loading,
   voted,
 }: Round2Props) {
-  // Show all takes except your own
   const takesToVote: Submission[] = Object.values(room.submissions).filter(
     (s) => s.player !== playerAddress
   );
 
-  const [votes, setVotes] = useState<Record<string, number>>({});
+  // votes = set of player addresses you have voted for
+  const [votes, setVotes] = useState<Set<string>>(new Set());
 
-  const allVoted = takesToVote.every((s) => votes[s.player] !== undefined);
+  const toggleVote = (playerAddr: string) => {
+    setVotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(playerAddr)) {
+        next.delete(playerAddr);
+      } else {
+        if (next.size >= 3) return prev; // max 3 votes
+        next.add(playerAddr);
+      }
+      return next;
+    });
+  };
+
+  // Build votes record: { playerAddress: 1 } for each voted take
+  const buildVotesRecord = (): Record<string, number> => {
+    const record: Record<string, number> = {};
+    votes.forEach((addr) => { record[addr] = 1; });
+    return record;
+  };
+
   const votedCount = Object.keys(room.votes).filter((id) => !id.startsWith("bot_")).length;
   const playerCount = Object.values(room.players).filter((p) => !p.is_bot).length;
 
@@ -59,14 +70,12 @@ export default function Round2Screen({
           </div>
           <div className="ai-waiting-block">
             <div className="ai-waiting-icon">⚖️</div>
-            <p className="ai-waiting-title">AI judges are on standby</p>
+            <p className="ai-waiting-title">AI Judges On Standby</p>
             <p className="ai-waiting-sub">
               Once all votes are in, the AI panel evaluates every take.<br />
               This takes 60–90 seconds — the only AI wait in the game.
             </p>
-            <div className="ai-tips">
-              <span>They score: persuasiveness · creativity · clarity</span>
-            </div>
+            <div className="ai-tips">They score: persuasiveness · creativity · clarity</div>
           </div>
         </div>
       </div>
@@ -84,44 +93,37 @@ export default function Round2Screen({
 
       <h2 className="screen-title">Vote on the takes</h2>
       <p className="screen-sub">
-        Rate each take 1–3. You cannot vote on your own.
+        Tap up to <strong>3 takes</strong> you think are best. Tap again to unvote.
       </p>
+
+      <div style={{ textAlign: "center", fontSize: "0.85rem", color: votes.size >= 3 ? "#FF3D00" : "#718096", fontWeight: votes.size >= 3 ? 700 : 400 }}>
+        {votes.size}/3 votes used
+      </div>
 
       <div className="takes-list">
         {takesToVote.map((sub) => {
           const sd = STANCE_DISPLAY[sub.stance] || { emoji: "🔥", label: sub.stance };
-          const myVote = votes[sub.player];
+          const isVoted = votes.has(sub.player);
+          const maxReached = votes.size >= 3 && !isVoted;
 
           return (
             <div
               key={sub.player}
-              className={`take-card ${myVote ? "take-card--voted" : ""}`}
+              className={`take-card ${isVoted ? "take-card--voted" : ""}`}
+              onClick={() => !maxReached && toggleVote(sub.player)}
+              style={{ opacity: maxReached ? 0.45 : 1, cursor: maxReached ? "default" : "pointer" }}
             >
               <div className="take-card-header">
                 <span className="take-scenario">{sub.scenario_title}</span>
-                <span className="take-stance">
-                  {sd.emoji} {sd.label}
-                </span>
+                <span className="take-stance">{sd.emoji} {sd.label}</span>
               </div>
-
               <div className="take-name">
                 {sub.is_bot ? `🤖 ${sub.name}` : sub.name}
               </div>
-
               <p className="take-text">{sub.take}</p>
-
-              <div className="vote-buttons">
-                {VOTE_OPTIONS.map((v) => (
-                  <button
-                    key={v}
-                    className={`vote-btn ${myVote === v ? "vote-btn--selected" : ""}`}
-                    onClick={() => setVotes((prev) => ({ ...prev, [sub.player]: v }))}
-                  >
-                    <span className="vote-num">{v}</span>
-                    <span className="vote-label">{VOTE_LABELS[v]}</span>
-                  </button>
-                ))}
-              </div>
+              {isVoted && (
+                <div className="voted-indicator">✓ Voted — tap to remove</div>
+              )}
             </div>
           );
         })}
@@ -129,23 +131,16 @@ export default function Round2Screen({
 
       <button
         className="btn-primary"
-        onClick={() => onSubmitVotes(votes)}
-        disabled={!allVoted || !!loading}
+        onClick={() => onSubmitVotes(buildVotesRecord())}
+        disabled={votes.size === 0 || !!loading}
       >
         {loading ? (
-          <span className="btn-loading">
-            <span className="spinner" />
-            Submitting votes...
-          </span>
-        ) : (
-          `Submit Votes (${Object.keys(votes).length}/${takesToVote.length})`
-        )}
+          <span className="btn-loading"><span className="spinner" />Submitting votes...</span>
+        ) : `Submit ${votes.size} Vote${votes.size !== 1 ? "s" : ""}`}
       </button>
 
-      {!allVoted && (
-        <p className="hint-text">
-          Vote on all {takesToVote.length} takes to continue
-        </p>
+      {votes.size === 0 && (
+        <p className="hint-text">Tap at least 1 take to vote</p>
       )}
     </div>
   );
