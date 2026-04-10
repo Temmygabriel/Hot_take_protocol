@@ -23,8 +23,9 @@ export default function LobbyScreen({
   const players = Object.values(room.players);
   const me = room.players[playerAddress];
   const isSolo = room.is_solo;
-  const allReady = players.every((p) => p.ready);
-  const canStart = isHost && players.length >= (isSolo ? 1 : 3) && allReady;
+
+  // Host can start with 3+ players — no ready requirement
+  const canStart = isHost && players.length >= (isSolo ? 1 : 3);
 
   const copyCode = () => {
     navigator.clipboard.writeText(room.code);
@@ -33,7 +34,6 @@ export default function LobbyScreen({
 
   return (
     <div className="screen fadeIn">
-      {/* Header row */}
       <div className="lobby-header">
         <div>
           <div className="lobby-title">{isSolo ? "SOLO ARENA" : "LOBBY"}</div>
@@ -43,17 +43,21 @@ export default function LobbyScreen({
         </div>
         <div className="lobby-header-actions">
           {!isSolo && (
-            <button className="btn-outline" onClick={copyCode} style={{ width: "auto", padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
+            <button
+              className="btn-outline"
+              onClick={copyCode}
+              style={{ width: "auto", padding: "0.5rem 1rem", fontSize: "0.85rem" }}
+            >
               📋 Copy Code
             </button>
           )}
         </div>
       </div>
 
-      {/* Player list */}
       <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
         Players ({players.length}/5)
       </div>
+
       <div className="player-list">
         {players.map((p) => (
           <div
@@ -90,7 +94,6 @@ export default function LobbyScreen({
         )}
       </div>
 
-      {/* Ready / Start actions */}
       <div className="lobby-actions">
         {!isHost && !isSolo && (
           <button
@@ -101,7 +104,6 @@ export default function LobbyScreen({
             {loading ? "..." : me?.ready ? "✓ Ready!" : "Mark Ready"}
           </button>
         )}
-
         {isHost && (
           <button
             className="btn-primary"
@@ -110,21 +112,14 @@ export default function LobbyScreen({
           >
             {loading ? (
               <span className="btn-loading"><span className="spinner" />Starting...</span>
-            ) : (
-              `🚀 START GAME`
-            )}
+            ) : "🚀 START GAME"}
           </button>
         )}
       </div>
 
       {isHost && !canStart && (
-        <p className="hint-text">
-          {players.length < 3
-            ? `Need at least 3 players to start (${players.length}/3)`
-            : "Waiting for all players to ready up"}
-        </p>
+        <p className="hint-text">Need at least 3 players to start ({players.length}/3)</p>
       )}
-
       {!isHost && (
         <p className="hint-text pulse">⏳ Waiting for host to start the game...</p>
       )}
