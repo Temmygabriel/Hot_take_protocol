@@ -9,7 +9,6 @@ body {
 }
 ::placeholder { color: #718096; }
 
-/* ---- Global input reset ---- */
 input, textarea {
   background: #FFFFFF;
   color: #1A202C;
@@ -29,23 +28,28 @@ input:focus, textarea:focus {
 textarea { resize: vertical; min-height: 100px; }
 button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none; background: none; }
 
-/* ---- App Shell ---- */
+/* ================================================================
+   APP SHELL — full width, content centered with responsive max-width
+   ================================================================ */
 .app-root {
   min-height: 100vh;
   background: #F5F7FA;
 }
 .app-container {
-  max-width: 520px;
+  width: 100%;
+  max-width: 680px;
   margin: 0 auto;
-  padding: 0 0 5rem;
+  padding: 0 1.5rem 5rem;
 }
 
-/* ---- Screen ---- */
+/* ================================================================
+   SCREEN BASE
+   ================================================================ */
 .screen {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 24px 1.5rem 0;
+  padding-top: 24px;
 }
 .screen--centered {
   align-items: center;
@@ -61,14 +65,19 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 }
 .screen-sub { font-size: 15px; color: #718096; line-height: 1.5; }
 
-/* ---- Hero ---- */
+/* ================================================================
+   HERO — full viewport width, content centered inside
+   ================================================================ */
 .hero-section {
   background: linear-gradient(160deg, #fff 0%, #FFF5F2 60%, #F5F7FA 100%);
   border-bottom: 1px solid #E2E8F0;
   padding: 4rem 1.5rem 3rem;
+  /* Break out of app-container to go full width */
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
 }
 .hero-inner {
-  max-width: 520px;
+  max-width: 680px;
   margin: 0 auto;
   text-align: center;
 }
@@ -89,7 +98,7 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 }
 .hero-title {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(3.5rem, 10vw, 6rem);
+  font-size: clamp(3.5rem, 12vw, 8rem);
   line-height: 0.92;
   letter-spacing: -0.01em;
   color: #1A202C;
@@ -138,11 +147,13 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   text-transform: uppercase;
 }
 
-/* ---- Landing body ---- */
-.landing-body { padding: 2.5rem 1.5rem; }
+/* ================================================================
+   LANDING BODY
+   ================================================================ */
+.landing-body {
+  padding: 2.5rem 0;
+}
 .landing-body-inner {
-  max-width: 520px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -160,11 +171,7 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   gap: 0.75rem;
   align-items: stretch;
 }
-.name-input-row input {
-  margin: 0;
-  flex: 1;
-  width: auto;
-}
+.name-input-row input { margin: 0; flex: 1; width: auto; }
 .set-btn {
   background: #1A202C;
   color: white;
@@ -206,11 +213,7 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   gap: 0.6rem;
   align-items: stretch;
 }
-.join-row input {
-  flex: 1;
-  margin: 0;
-  width: auto;
-}
+.join-row input { flex: 1; margin: 0; width: auto; }
 .join-btn {
   background: transparent;
   color: #1A202C;
@@ -228,7 +231,9 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .join-btn:hover:not(:disabled) { border-color: #FF3D00; color: #FF3D00; }
 .join-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ---- Buttons ---- */
+/* ================================================================
+   BUTTONS
+   ================================================================ */
 .btn-primary {
   width: 100%;
   padding: 0.95rem 1.75rem;
@@ -307,10 +312,11 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   transition: all 0.2s;
 }
 .btn-ready--unready:hover { border-color: #00E676; color: #00a65a; }
-
 .btn-loading { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
-/* ---- Spinner ---- */
+/* ================================================================
+   SPINNER
+   ================================================================ */
 .spinner {
   display: inline-block;
   width: 14px;
@@ -322,7 +328,9 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- Back button ---- */
+/* ================================================================
+   MISC UI
+   ================================================================ */
 .back-btn {
   font-size: 14px;
   color: #718096;
@@ -338,8 +346,6 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   padding: 0;
 }
 .back-btn:hover { color: #1A202C; }
-
-/* ---- Form fields ---- */
 .field-label {
   font-size: 13px;
   font-weight: 600;
@@ -359,20 +365,14 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
   transition: border-color 0.15s, box-shadow 0.15s;
   font-family: 'Space Grotesk', sans-serif;
 }
-.text-input:focus {
-  border-color: #FF3D00;
-  box-shadow: 0 0 0 3px rgba(255,61,0,0.1);
-}
-.code-input {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 22px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
+.text-input:focus { border-color: #FF3D00; box-shadow: 0 0 0 3px rgba(255,61,0,0.1); }
+.code-input { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.1em; text-transform: uppercase; }
 .error-text { font-size: 14px; color: #FF3D00; font-weight: 500; }
 .hint-text { font-size: 13px; color: #A0AEC0; text-align: center; }
 
-/* ---- Room code banner ---- */
+/* ================================================================
+   ROOM CODE BANNER
+   ================================================================ */
 .room-code-banner {
   background: #EDF2F7;
   border: 1px solid #E2E8F0;
@@ -384,74 +384,52 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 }
 .rcode-label { font-size: 11px; color: #718096; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .rcode-value { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: #1A202C; letter-spacing: 0.12em; flex: 1; }
-.rcode-copy {
-  font-size: 12px; font-weight: 600; color: #718096; padding: 4px 10px;
-  border: 1px solid #E2E8F0; border-radius: 8px; cursor: pointer;
-  transition: background 0.15s; background: none; font-family: 'Space Grotesk', sans-serif;
-}
+.rcode-copy { font-size: 12px; font-weight: 600; color: #718096; padding: 4px 10px; border: 1px solid #E2E8F0; border-radius: 8px; cursor: pointer; transition: background 0.15s; background: none; font-family: 'Space Grotesk', sans-serif; }
 .rcode-copy:hover { background: #E2E8F0; }
 
-/* ---- Lobby ---- */
+/* ================================================================
+   LOBBY
+   ================================================================ */
 .lobby-header { display: flex; justify-content: space-between; align-items: center; }
 .lobby-title { font-family: 'Bebas Neue', sans-serif; font-size: 2rem; letter-spacing: 0.06em; }
 .lobby-header-actions { display: flex; gap: 0.65rem; }
 .lobby-meta { color: #718096; font-size: 0.9rem; }
-
-/* ---- Player list ---- */
 .player-list { display: flex; flex-direction: column; gap: 8px; }
-.player-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px; background: #FFFFFF;
-  border: 1px solid #E2E8F0; border-radius: 12px;
-}
+.player-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; }
 .player-row--me { border-color: rgba(255,61,0,0.35); background: rgba(255,61,0,0.04); }
 .player-row--empty { opacity: 0.45; }
-.player-avatar {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: #EDF2F7; display: flex; align-items: center;
-  justify-content: center; font-family: 'Bebas Neue', sans-serif;
-  font-size: 16px; color: #718096; flex-shrink: 0;
-}
+.player-avatar { width: 36px; height: 36px; border-radius: 50%; background: #EDF2F7; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: #718096; flex-shrink: 0; }
 .player-name { flex: 1; font-size: 15px; font-weight: 500; }
 .ready-badge { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 100px; }
 .ready-badge--yes { background: rgba(0,230,118,0.12); color: #00a65a; border: 1px solid rgba(0,230,118,0.3); }
 .ready-badge--no { background: #EDF2F7; color: #718096; border: 1px solid #E2E8F0; }
 .lobby-actions { display: flex; flex-direction: column; gap: 10px; }
 
-/* ---- Round header ---- */
+/* ================================================================
+   ROUND
+   ================================================================ */
 .round-header { display: flex; align-items: center; gap: 12px; }
-.round-badge {
-  font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 0.1em;
-  background: #1A202C; color: #F5F7FA; padding: 4px 12px; border-radius: 100px;
-}
+.round-badge { font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 0.1em; background: #1A202C; color: #F5F7FA; padding: 4px 12px; border-radius: 100px; }
 .round-badge--2 { background: #D500F9; }
 .round-meta { font-size: 13px; color: #718096; }
-.section-label {
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.1em; color: #718096; margin-top: 4px;
-}
+.section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #718096; margin-top: 4px; }
 
-/* ---- Scenario cards ---- */
+/* ================================================================
+   SCENARIO CARDS
+   ================================================================ */
 .scenario-list { display: flex; flex-direction: column; gap: 10px; }
-.scenario-card {
-  text-align: left; padding: 16px; background: #FFFFFF;
-  border: 1.5px solid #CBD5E0; border-radius: 12px;
-  transition: border-color 0.15s, background 0.15s; cursor: pointer; width: 100%;
-  font-family: 'Space Grotesk', sans-serif;
-}
+.scenario-card { text-align: left; padding: 16px; background: #FFFFFF; border: 1.5px solid #CBD5E0; border-radius: 12px; transition: border-color 0.15s, background 0.15s; cursor: pointer; width: 100%; font-family: 'Space Grotesk', sans-serif; }
 .scenario-card:hover { border-color: #1A202C; }
 .scenario-card--selected { border-color: #FF3D00; background: rgba(255,61,0,0.04); }
 .scenario-cat { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #FF3D00; margin-bottom: 4px; }
 .scenario-title { font-family: 'Bebas Neue', sans-serif; font-size: 17px; letter-spacing: 0.03em; color: #1A202C; margin-bottom: 6px; }
 .scenario-prompt { font-size: 13px; color: #718096; line-height: 1.5; }
 
-/* ---- Stance grid ---- */
+/* ================================================================
+   STANCE
+   ================================================================ */
 .stance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.stance-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 14px 8px; background: #FFFFFF; border: 1.5px solid #CBD5E0;
-  border-radius: 12px; transition: all 0.15s; cursor: pointer; font-family: 'Space Grotesk', sans-serif;
-}
+.stance-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px; background: #FFFFFF; border: 1.5px solid #CBD5E0; border-radius: 12px; transition: all 0.15s; cursor: pointer; font-family: 'Space Grotesk', sans-serif; }
 .stance-btn:hover { border-color: #1A202C; }
 .stance-btn--selected[data-stance="genius"] { border-color: #FFD600; background: rgba(255,214,0,0.08); }
 .stance-btn--selected[data-stance="trash"] { border-color: #718096; background: rgba(113,128,150,0.08); }
@@ -460,51 +438,68 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .stance-label { font-size: 13px; font-weight: 700; color: #1A202C; }
 .stance-desc { font-size: 11px; color: #718096; text-align: center; }
 
-/* ---- Take input ---- */
+/* ================================================================
+   TAKE INPUT
+   ================================================================ */
 .take-input-wrapper { position: relative; }
-.take-input {
-  width: 100%; padding: 12px 14px; font-size: 15px; background: #FFFFFF;
-  border: 2px solid #CBD5E0; border-radius: 12px; color: #1A202C; resize: none;
-  outline: none; line-height: 1.5; transition: border-color 0.15s, box-shadow 0.15s;
-  font-family: 'Space Grotesk', sans-serif;
-}
+.take-input { width: 100%; padding: 12px 14px; font-size: 15px; background: #FFFFFF; border: 2px solid #CBD5E0; border-radius: 12px; color: #1A202C; resize: none; outline: none; line-height: 1.5; transition: border-color 0.15s, box-shadow 0.15s; font-family: 'Space Grotesk', sans-serif; }
 .take-input:focus { border-color: #FF3D00; box-shadow: 0 0 0 3px rgba(255,61,0,0.08); }
 .char-count { text-align: right; font-size: 12px; color: #A0AEC0; margin-top: 4px; }
 .char-count--warning { color: #FF3D00; font-weight: 600; }
 
-/* ---- Submitted state ---- */
-.submitted-state {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 14px; text-align: center; max-width: 360px; margin: 0 auto;
-}
-.submitted-icon {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: rgba(0,230,118,0.1); color: #00a65a;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px; font-weight: 700; border: 2px solid rgba(0,230,118,0.35);
-}
+/* ================================================================
+   SUBMITTED / WAITING STATES
+   ================================================================ */
+.submitted-state { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; max-width: 480px; margin: 0 auto; }
+.submitted-icon { width: 56px; height: 56px; border-radius: 50%; background: rgba(0,230,118,0.1); color: #00a65a; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; border: 2px solid rgba(0,230,118,0.35); }
 .waiting-tip { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #718096; }
 .waiting-tip .spinner { border-color: rgba(0,0,0,0.15); border-top-color: #718096; }
-.genlayer-note { font-size: 13px; color: #A0AEC0; background: #EDF2F7; padding: 10px 14px; border-radius: 12px; line-height: 1.5; }
+.genlayer-note { font-size: 13px; color: #A0AEC0; background: #EDF2F7; padding: 10px 14px; border-radius: 12px; line-height: 1.5; width: 100%; }
 
-/* ---- AI waiting ---- */
-.ai-waiting-block {
-  background: #EDF2F7; border: 1px solid #E2E8F0; border-radius: 12px;
-  padding: 20px; text-align: center; display: flex; flex-direction: column;
-  gap: 8px; max-width: 360px; margin: 0 auto;
+/* Timer banner */
+.timer-banner {
+  background: rgba(255,61,0,0.06);
+  border: 1px solid rgba(255,61,0,0.2);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #FF3D00;
+  line-height: 1.5;
+  text-align: center;
+  width: 100%;
 }
+
+/* ================================================================
+   AI WAITING
+   ================================================================ */
+.ai-waiting-block { background: #EDF2F7; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; text-align: center; display: flex; flex-direction: column; gap: 8px; max-width: 480px; margin: 0 auto; width: 100%; }
 .ai-waiting-icon { font-size: 28px; }
 .ai-waiting-title { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 0.04em; }
 .ai-waiting-sub { font-size: 13px; color: #718096; line-height: 1.5; }
 .ai-tips { font-size: 12px; color: #A0AEC0; }
 
-/* ---- Takes list ---- */
-.takes-list { display: flex; flex-direction: column; gap: 12px; }
-.take-card {
-  background: #FFFFFF; border: 1.5px solid #CBD5E0; border-radius: 16px;
-  padding: 16px; display: flex; flex-direction: column; gap: 10px;
-  transition: border-color 0.15s; cursor: pointer;
+/* AI calculating block - shown when all voted */
+.ai-calculating-block {
+  background: linear-gradient(135deg, rgba(213,0,249,0.06), rgba(255,61,0,0.06));
+  border: 1.5px solid rgba(213,0,249,0.25);
+  border-radius: 12px;
+  padding: 24px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
 }
+.ai-calculating-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.06em; color: #D500F9; }
+.ai-calculating-sub { font-size: 13px; color: #718096; line-height: 1.6; }
+
+/* ================================================================
+   TAKES LIST (VOTING)
+   ================================================================ */
+.takes-list { display: flex; flex-direction: column; gap: 12px; }
+.take-card { background: #FFFFFF; border: 1.5px solid #CBD5E0; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; transition: border-color 0.15s; cursor: pointer; }
 .take-card:hover { border-color: #A0AEC0; }
 .take-card--voted { border-color: #FF3D00; background: rgba(255,61,0,0.03); }
 .take-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -514,24 +509,17 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .take-text { font-size: 15px; color: #1A202C; line-height: 1.6; }
 .voted-indicator { font-size: 12px; font-weight: 700; color: #FF3D00; }
 
-/* ---- Results ---- */
-.winner-banner {
-  background: #EDF2F7; border: 1.5px solid #E2E8F0; border-radius: 16px;
-  padding: 20px; display: flex; flex-direction: column; gap: 10px;
-}
-.winner-banner--mine {
-  background: linear-gradient(135deg, rgba(255,214,0,0.1) 0%, rgba(255,109,0,0.06) 100%);
-  border-color: rgba(255,214,0,0.4);
-}
+/* ================================================================
+   RESULTS
+   ================================================================ */
+.winner-banner { background: #EDF2F7; border: 1.5px solid #E2E8F0; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.winner-banner--mine { background: linear-gradient(135deg, rgba(255,214,0,0.1) 0%, rgba(255,109,0,0.06) 100%); border-color: rgba(255,214,0,0.4); }
 .winner-crown { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 0.04em; color: #1A202C; }
 .winner-take { display: flex; flex-direction: column; gap: 4px; }
 .winner-take-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #718096; }
 .winner-take-text { font-size: 15px; color: #1A202C; line-height: 1.5; }
 .winner-reason { font-size: 13px; color: #718096; font-style: italic; }
-.my-result {
-  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
-  background: rgba(255,61,0,0.04); border: 1px solid rgba(255,61,0,0.2); border-radius: 12px;
-}
+.my-result { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: rgba(255,61,0,0.04); border: 1px solid rgba(255,61,0,0.2); border-radius: 12px; }
 .my-rank-label { font-size: 13px; color: #718096; }
 .my-rank-num { font-family: 'Bebas Neue', sans-serif; font-size: 26px; flex: 1; letter-spacing: 0.04em; }
 .my-score { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: #FF3D00; letter-spacing: 0.04em; }
@@ -550,7 +538,9 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .results-actions { display: flex; flex-direction: column; gap: 10px; }
 .results-note { font-size: 13px; color: #A0AEC0; text-align: center; line-height: 1.5; }
 
-/* ---- Rejoin ---- */
+/* ================================================================
+   CHECK GAME STATUS
+   ================================================================ */
 .lookup-form { display: flex; flex-direction: column; gap: 10px; }
 .room-result { background: #FFFFFF; border: 1.5px solid #CBD5E0; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .room-result-header { display: flex; align-items: center; justify-content: space-between; }
@@ -566,7 +556,9 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .mini-rank-score { font-weight: 600; color: #718096; }
 .rejoin-tip { font-size: 13px; color: #718096; background: #EDF2F7; padding: 12px 14px; border-radius: 12px; line-height: 1.5; }
 
-/* ---- Leaderboard ---- */
+/* ================================================================
+   LEADERBOARD
+   ================================================================ */
 .tab-bar { display: flex; gap: 4px; background: #EDF2F7; padding: 4px; border-radius: 12px; }
 .tab-btn { flex: 1; padding: 8px; font-size: 14px; font-weight: 500; border-radius: 8px; color: #718096; transition: all 0.15s; cursor: pointer; background: none; border: none; font-family: 'Space Grotesk', sans-serif; }
 .tab-btn--active { background: #FFFFFF; color: #1A202C; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-weight: 600; }
@@ -590,18 +582,20 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .empty-state { font-size: 15px; color: #718096; text-align: center; padding: 32px 0; }
 .my-stats { display: flex; flex-direction: column; gap: 12px; }
 
-/* ---- Chips ---- */
+/* ================================================================
+   CHIPS + DOTS
+   ================================================================ */
 .voted-chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.3); color: #00a65a; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
 .pending-chip { display: inline-flex; align-items: center; gap: 4px; background: #EDF2F7; border: 1px solid #E2E8F0; color: #718096; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; }
-
-/* ---- AI dots ---- */
 .ai-dots { display: flex; justify-content: center; gap: 6px; }
 .ai-dots span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #D500F9; animation: dotBounce 1.2s infinite; }
 .ai-dots span:nth-child(2) { animation-delay: 0.2s; }
 .ai-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes dotBounce { 0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1.2); opacity: 1; } }
 
-/* ---- Animations ---- */
+/* ================================================================
+   ANIMATIONS
+   ================================================================ */
 .fadeIn { animation: fadeIn 0.4s ease-in; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .pulse { animation: pulse 2s infinite; }
@@ -609,15 +603,33 @@ button { font-family: 'Space Grotesk', sans-serif; cursor: pointer; border: none
 .slide-up { animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ---- Desktop layout ---- */
+/* ================================================================
+   RESPONSIVE — tablet and desktop
+   ================================================================ */
 @media (min-width: 600px) {
-  .hero-section {
-    padding: 5rem 2rem 4rem;
-  }
-  .hero-title {
-    font-size: 7rem;
-  }
-  .landing-body {
-    padding: 3rem 2rem;
-  }
+  .app-container { padding: 0 2rem 6rem; }
+  .hero-section { padding: 6rem 2rem 4rem; }
+  .hero-title { font-size: clamp(5rem, 12vw, 9rem); }
+  .hero-subtitle { font-size: 1.2rem; }
+  .stat-chip { min-width: 100px; padding: 1rem 1.5rem; }
+  .stat-chip .num { font-size: 2rem; }
+  .screen-title { font-size: 2.5rem; }
+  .scenario-title { font-size: 20px; }
+  .scenario-prompt { font-size: 14px; }
+  .take-text { font-size: 16px; }
+  .rank-total { font-size: 28px; }
+  .lb-total { font-size: 30px; }
+}
+
+@media (min-width: 900px) {
+  .app-container { max-width: 760px; }
+  .hero-inner { max-width: 760px; }
+  .landing-body-inner { max-width: 760px; }
+  .stat-chips { gap: 1rem; }
+}
+
+@media (min-width: 1200px) {
+  .app-container { max-width: 860px; }
+  .hero-inner { max-width: 860px; }
+  .landing-body-inner { max-width: 860px; }
 }
