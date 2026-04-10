@@ -29,7 +29,6 @@ export default function Round2Screen({
     (s) => s.player !== playerAddress
   );
 
-  // votes = set of player addresses you have voted for
   const [votes, setVotes] = useState<Set<string>>(new Set());
 
   const toggleVote = (playerAddr: string) => {
@@ -38,22 +37,23 @@ export default function Round2Screen({
       if (next.has(playerAddr)) {
         next.delete(playerAddr);
       } else {
-        if (next.size >= 3) return prev; // max 3 votes
+        if (next.size >= 3) return prev;
         next.add(playerAddr);
       }
       return next;
     });
   };
 
-  // Build votes record: { playerAddress: 1 } for each voted take
   const buildVotesRecord = (): Record<string, number> => {
     const record: Record<string, number> = {};
     votes.forEach((addr) => { record[addr] = 1; });
     return record;
   };
 
+  const humanPlayers = Object.values(room.players).filter((p) => !p.is_bot);
   const votedCount = Object.keys(room.votes).filter((id) => !id.startsWith("bot_")).length;
-  const playerCount = Object.values(room.players).filter((p) => !p.is_bot).length;
+  const playerCount = humanPlayers.length;
+  const allVoted = votedCount >= playerCount;
 
   if (voted) {
     return (
@@ -64,19 +64,47 @@ export default function Round2Screen({
           <p className="screen-sub">
             {votedCount}/{playerCount} players have voted
           </p>
-          <div className="waiting-tip">
-            <span className="spinner" />
-            Waiting for all votes...
-          </div>
-          <div className="ai-waiting-block">
-            <div className="ai-waiting-icon">⚖️</div>
-            <p className="ai-waiting-title">AI Judges On Standby</p>
-            <p className="ai-waiting-sub">
-              Once all votes are in, the AI panel evaluates every take.<br />
-              This takes 60–90 seconds — the only AI wait in the game.
-            </p>
-            <div className="ai-tips">They score: persuasiveness · creativity · clarity</div>
-          </div>
+
+          {allVoted ? (
+            /* All votes in — AI is now calculating */
+            <div className="ai-calculating-block">
+              <div style={{ fontSize: "2.5rem" }}>⚖️</div>
+              <div className="ai-calculating-title">AI Judges Are Working!</div>
+              <p className="ai-calculating-sub">
+                All votes are in. The AI panel is now scoring every take on
+                persuasiveness, creativity and clarity. This takes
+                60–90 seconds — the only wait in the entire game.
+                Do not close your tab.
+              </p>
+              <div className="ai-dots" style={{ marginTop: "8px" }}>
+                <span /><span /><span />
+              </div>
+            </div>
+          ) : (
+            /* Still waiting for some players to vote */
+            <>
+              <div className="waiting-tip">
+                <span className="spinner" />
+                Waiting for {playerCount - votedCount} more player{playerCount - votedCount > 1 ? "s" : ""} to vote...
+              </div>
+              <div className="timer-banner">
+                ⏱ If someone doesn&apos;t vote within 30 seconds of everyone else
+                finishing, the game moves forward automatically.
+                No one can hold the game hostage.
+              </div>
+              <div className="ai-waiting-block">
+                <div className="ai-waiting-icon">⚖️</div>
+                <p className="ai-waiting-title">AI Judges On Standby</p>
+                <p className="ai-waiting-sub">
+                  Once all votes are in, the AI panel evaluates every take.
+                  60–90 seconds — the only AI wait in the game.
+                </p>
+                <div className="ai-tips">
+                  They score: persuasiveness · creativity · clarity
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -96,7 +124,12 @@ export default function Round2Screen({
         Tap up to <strong>3 takes</strong> you think are best. Tap again to unvote.
       </p>
 
-      <div style={{ textAlign: "center", fontSize: "0.85rem", color: votes.size >= 3 ? "#FF3D00" : "#718096", fontWeight: votes.size >= 3 ? 700 : 400 }}>
+      <div style={{
+        textAlign: "center",
+        fontSize: "0.85rem",
+        color: votes.size >= 3 ? "#FF3D00" : "#718096",
+        fontWeight: votes.size >= 3 ? 700 : 400,
+      }}>
         {votes.size}/3 votes used
       </div>
 
