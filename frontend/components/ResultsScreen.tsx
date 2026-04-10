@@ -1,6 +1,5 @@
 "use client";
-// Hot Take Protocol - Results Screen
-// v1.0
+// Hot Take Protocol - Results Screen v1.0
 
 import { Room, RankEntry } from "../types";
 
@@ -13,8 +12,8 @@ interface ResultsProps {
 
 const STANCE_EMOJI: Record<string, string> = {
   genius: "🔥",
-  trash: "🗑️",
-  spicy: "😈",
+  trash:  "🗑️",
+  spicy:  "😈",
 };
 
 const RANK_MEDALS = ["🥇", "🥈", "🥉"];
@@ -28,12 +27,11 @@ export default function ResultsScreen({
   const rankings = room.rankings;
   const myRank = rankings.findIndex((r) => r.player === playerAddress);
   const myResult = rankings[myRank];
-
   const winner = rankings[0];
   const isWinner = winner?.player === playerAddress;
 
   return (
-    <div className="screen">
+    <div className="screen fadeIn">
       {/* Winner Banner */}
       <div className={`winner-banner ${isWinner ? "winner-banner--mine" : ""}`}>
         <div className="winner-crown">
@@ -67,14 +65,9 @@ export default function ResultsScreen({
         {rankings.map((entry, i) => {
           const isMe = entry.player === playerAddress;
           const medal = RANK_MEDALS[i] || `#${i + 1}`;
-
           return (
-            <div
-              key={entry.player}
-              className={`rank-row ${isMe ? "rank-row--me" : ""}`}
-            >
+            <div key={entry.player} className={`rank-row ${isMe ? "rank-row--me" : ""}`}>
               <span className="rank-medal">{medal}</span>
-
               <div className="rank-info">
                 <div className="rank-name">
                   {entry.player.startsWith("bot_") ? `🤖 ${entry.name}` : entry.name}
@@ -87,7 +80,6 @@ export default function ResultsScreen({
                   <div className="rank-reason">⚖️ {entry.reason}</div>
                 )}
               </div>
-
               <div className="rank-scores">
                 <div className="rank-total">{entry.total_score}</div>
                 <div className="rank-breakdown">
@@ -100,7 +92,7 @@ export default function ResultsScreen({
         })}
       </div>
 
-      {/* Score Explanation */}
+      {/* Score legend */}
       <div className="score-legend">
         <span>⚖️ AI judge score (1–10)</span>
         <span>·</span>
@@ -111,17 +103,14 @@ export default function ResultsScreen({
 
       {/* Actions */}
       <div className="results-actions">
-        <button className="btn-primary" onClick={onPlayAgain}>
-          Play Again
-        </button>
-        <button className="btn-secondary" onClick={onHome}>
-          Back to Home
-        </button>
+        <button className="btn-primary" onClick={onPlayAgain}>Play Again</button>
+        <button className="btn-outline" onClick={onHome}>Back to Home</button>
       </div>
 
+      {/* Footer note — updated wording */}
       <p className="results-note">
-        Room <strong>{room.code}</strong> · Come back anytime — results are saved on-chain.
-        Use &ldquo;Rejoin or Review&rdquo; on the home screen to find this game.
+        Room <strong>{room.code}</strong> · Results are saved on-chain permanently.
+        Use <strong>Check Game Status</strong> on the home screen to find this game anytime.
       </p>
     </div>
   );
