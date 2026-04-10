@@ -1,6 +1,5 @@
 "use client";
-// Hot Take Protocol - Round 1 Screen
-// v1.0
+// Hot Take Protocol - Round 1 Screen v1.0
 
 import { useState } from "react";
 import { Room, Scenario, Stance } from "../types";
@@ -15,8 +14,8 @@ interface Round1Props {
 
 const STANCES: { value: Stance; emoji: string; label: string; desc: string }[] = [
   { value: "genius", emoji: "🔥", label: "Genius", desc: "This is objectively correct" },
-  { value: "trash", emoji: "🗑️", label: "Trash", desc: "This is objectively wrong" },
-  { value: "spicy", emoji: "😈", label: "Spicy", desc: "This will cause chaos" },
+  { value: "trash",  emoji: "🗑️", label: "Trash",  desc: "This is objectively wrong" },
+  { value: "spicy",  emoji: "😈", label: "Spicy",  desc: "This will cause chaos" },
 ];
 
 const MAX_CHARS = 200;
@@ -36,9 +35,8 @@ export default function Round1Screen({
   const canSubmit = selectedScenario && stance && take.trim().length >= 10 && !submitted;
 
   const playerList = Object.values(room.players).filter((p) => !p.is_bot);
-  const submittedCount = Object.keys(room.submissions).filter(
-    (id) => !id.startsWith("bot_")
-  ).length;
+  const submittedCount = Object.keys(room.submissions).filter((id) => !id.startsWith("bot_")).length;
+  const waitingCount = playerList.length - submittedCount;
 
   if (submitted) {
     return (
@@ -49,12 +47,30 @@ export default function Round1Screen({
           <p className="screen-sub">
             {submittedCount}/{playerList.length} players have submitted
           </p>
-          <div className="waiting-tip">
-            <span className="spinner" />
-            Waiting for other players...
-          </div>
+
+          {waitingCount > 0 ? (
+            <>
+              <div className="waiting-tip">
+                <span className="spinner" />
+                Waiting for {waitingCount} more player{waitingCount > 1 ? "s" : ""}...
+              </div>
+              <div className="timer-banner">
+                ⏱ Don&apos;t worry if someone&apos;s slow — after 60 seconds the game
+                moves to voting automatically, even if not everyone has submitted.
+                No one gets left behind.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="waiting-tip">
+                <span className="spinner" />
+                All takes in — advancing to voting...
+              </div>
+            </>
+          )}
+
           <p className="genlayer-note">
-            Once all takes are in, voting begins instantly — no AI wait.
+            Once all takes are in, voting begins instantly — no AI wait needed yet.
           </p>
         </div>
       </div>
@@ -73,7 +89,6 @@ export default function Round1Screen({
       <h2 className="screen-title">Pick your scenario</h2>
       <p className="screen-sub">Choose one. Write your hottest take. 200 chars max.</p>
 
-      {/* Scenario Selection */}
       <div className="scenario-list">
         {room.scenarios.map((s) => (
           <button
@@ -90,7 +105,6 @@ export default function Round1Screen({
 
       {selectedScenario && (
         <>
-          {/* Stance Selection */}
           <div className="section-label">Your stance</div>
           <div className="stance-grid">
             {STANCES.map((s) => (
@@ -107,7 +121,6 @@ export default function Round1Screen({
             ))}
           </div>
 
-          {/* Take Input */}
           <div className="section-label">Your take</div>
           <div className="take-input-wrapper">
             <textarea
@@ -128,13 +141,8 @@ export default function Round1Screen({
             disabled={!canSubmit || !!loading}
           >
             {loading ? (
-              <span className="btn-loading">
-                <span className="spinner" />
-                Submitting...
-              </span>
-            ) : (
-              "Submit Take 🔥"
-            )}
+              <span className="btn-loading"><span className="spinner" />Submitting...</span>
+            ) : "Submit Take 🔥"}
           </button>
         </>
       )}
